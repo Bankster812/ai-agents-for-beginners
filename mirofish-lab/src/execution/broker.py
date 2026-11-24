@@ -302,7 +302,7 @@ class PaperBroker(Broker):
             if existing is not None:      # idempotency: replayed intent after restart / duplicate tick
                 log.info("duplicate_client_order_id", extra={"evt": "duplicate_order", "cid": cid})
                 return existing
-            fs = market.fee_schedule if market else None
+            fs = dict(market.fee_schedule or {}, _category=market.category) if market else None
             fe = market.fees_enabled if market else None
             o = Order(client_order_id=cid, token_id=intent.token_id, side=intent.side, price=intent.price,
                       size=intent.size, tif=intent.tif, strategy=intent.strategy, reason=intent.reason)

@@ -1,18 +1,16 @@
-"""Fee model used by PaperBroker (and by risk for worst-case cost).
+"""Fee model used by PaperBroker. Single source of truth is `src/cost_model.py` (specialist 03).
 
-Preference order:
-1. `src/cost_model.py` from specialist 03 (microstructure), if it exists and exposes
-   `taker_fee_usd(price, shares, fee_schedule)` (or `polymarket_fee(...)`) — it is the lab's
-   single source of truth for costs.
-2. Fallback: Polymarket's published fee curve for fee-enabled markets, as read from the
-   Gamma `feeSchedule` field on each market (observed Nov 2026, e.g.
-   {"rate": 0.05, "exponent": 1, "takerOnly": true, "rebateRate": 0.15}):
+Formula (03, = docs.polymarket.com/trading/fees, taker only, makers pay 0, no fee at settlement):
 
-       fee_usdc = shares * p * rate * (p * (1 - p)) ** exponent      (taker only)
+    fee_usdc = shares * rate * p * (1 - p)        p = fill price
 
-   e.g. rate=0.05, exponent=1, p=0.50 -> 1.25% of notional; p=0.90 -> 0.45%.
-   Makers pay 0 when takerOnly. Markets with feesEnabled=false pay 0.
-   This formula is an ASSUMPTION reconstructed from Polymarket docs; 03's model overrides it.
+Rate selection, most specific first:
+1. the market's LIVE Gamma `feeSchedule.rate` (e.g. {"rate":0.05,"exponent":1,"takerOnly":true}) -
+   exactly what the exchange charges today; exponent != 1 is applied as (p(1-p))**exponent;
+2. otherwise `cost_model.fee(price, shares=..., category=<Gamma feeType>)` - 03's conservative
+   per-category rate (max of the 2026-11 and 2026-03 schedules);
+3. if cost_model is unavailable: rate 0.05 ("other" in 2026-11).
+Markets with feesEnabled == False pay 0.
 """
 from __future__ import annotations
 
@@ -21,42 +19,36 @@ from typing import Optional
 
 log = logging.getLogger("execution.fees")
 
-_cm = None
-try:  # pragma: no cover - depends on whether 03 has delivered
-    from src import cost_model as _cm  # type: ignore
+try:
+    from src import cost_model as _cm          # type: ignore
 except Exception:  # noqa: BLE001
     try:
-        import cost_model as _cm  # type: ignore
+        import cost_model as _cm               # type: ignore
     except Exception:  # noqa: BLE001
         _cm = None
 
-# Used only when a market has fees enabled but no schedule was discovered (conservative).
-DEFAULT_SCHEDULE = {"rate": 0.05, "exponent": 1, "takerOnly": True}
+FALLBACK_RATE = 0.05
 
 
 def fee_source() -> str:
-    if _cm is not None and (hasattr(_cm, "taker_fee_usd") or hasattr(_cm, "polymarket_fee")):
-        return "src.cost_model"
-    return "builtin-feeSchedule"
+    return "feeSchedule>src.cost_model" if _cm is not None else "feeSchedule>fallback0.05"
 
 
 def fee_usd(price: float, shares: float, liquidity: str = "taker",
-            fee_schedule: Optional[dict] = None, fees_enabled: Optional[bool] = None) -> float:
-    if shares <= 0:
+            fee_schedule: Optional[dict] = None, fees_enabled: Optional[bool] = None,
+            category: Optional[str] = None) -> float:
+    if shares <= 0 or fees_enabled is False:
         return 0.0
-    if fees_enabled is False:
+    if liquidity == "maker" and (fee_schedule or {}).get("takerOnly", True):
         return 0.0
-    sched = fee_schedule or DEFAULT_SCHEDULE
-    if liquidity == "maker" and sched.get("takerOnly", True):
-        return 0.0
+    category = category or (fee_schedule or {}).get("_category")
+    p = min(max(float(price), 0.0), 1.0)
+    if fee_schedule and "rate" in fee_schedule:
+        expo = float(fee_schedule.get("exponent", 1) or 1)
+        return float(shares) * float(fee_schedule["rate"]) * (p * (1.0 - p)) ** expo
     if _cm is not None:
-        fn = getattr(_cm, "taker_fee_usd", None) or getattr(_cm, "polymarket_fee", None)
-        if fn is not None:
-            try:
-                return float(fn(price, shares, sched))
-            except Exception as e:  # noqa: BLE001
-                log.warning("cost_model fee fn failed (%s); using builtin", e)
-    rate = float(sched.get("rate", DEFAULT_SCHEDULE["rate"]))
-    expo = float(sched.get("exponent", 1))
-    p = min(max(price, 0.0), 1.0)
-    return shares * p * rate * (p * (1.0 - p)) ** expo
+        try:
+            return float(_cm.fee(p, shares=float(shares), category=category or "other", maker=False))
+        except Exception as e:  # noqa: BLE001
+            log.warning("cost_model.fee failed (%s); using fallback", e)
+    return float(shares) * FALLBACK_RATE * p * (1.0 - p)
