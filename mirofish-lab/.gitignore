@@ -3,3 +3,11 @@ data/**/*.json
 *.pyc
 __pycache__/
 .venv/
+
+# execution layer (07): runtime state, secrets, databases
+state/
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
