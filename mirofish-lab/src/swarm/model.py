@@ -234,8 +234,6 @@ def simulate(inp: dict, params: dict, cfg: SwarmConfig = None, seed: int = 0, po
             i1 = rec.argmax(2)
             np.put_along_axis(rec, i1[:, :, None], -np.inf, 2)
             i2 = rec.argmax(2)
-            v2 = np.take_along_axis(rec, i2[:, :, None], 2)[:, :, 0] > -np.inf
-            v1 = (pvalid & True).sum(1)[:, None] > 0
             fidx = (ar * (N * N) + sel * N)[:, :, None] + pauth[:, None, :]  # (B,A,K) flat index into follow
             fol = np.take(follow.reshape(-1), fidx) & pvalid[:, None, :] & ~own
             fs = np.where(fol, plikes[:, None, :] + 0.1 * rng.random((B, A, K), dtype=F), -np.inf)
@@ -243,7 +241,8 @@ def simulate(inp: dict, params: dict, cfg: SwarmConfig = None, seed: int = 0, po
             j2 = fs.argmax(2); np.put_along_axis(fs, j2[:, :, None], -np.inf, 2)
             j3 = fs.argmax(2)
             items = np.stack([i1, i2, j1, j2, j3], 2)                       # (B,A,5) slot ids
-            fsel = np.stack([fol.any(2), None if False else (fol.sum(2) >= 2), fol.sum(2) >= 3], 2)
+            nfol = fol.sum(2)
+            fsel = np.stack([nfol >= 1, nfol >= 2, nfol >= 3], 2)
             nown = (pvalid[:, None, :] & ~own).sum(2)
             ivalid = np.concatenate([(nown >= 1)[:, :, None], (nown >= 2)[:, :, None], fsel], 2) & am[:, :, None]
             flat = ar[:, :, None] * K + items
