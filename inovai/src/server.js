@@ -176,16 +176,39 @@ function twilioCheck(req, t, body, kind) {
   if (c.authToken && c.validateSignature !== false && !twilioValid(c.authToken, url, body, req.headers['x-twilio-signature'])) throw err(403, 'Ungültige Twilio-Signatur');
 }
 const TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
-// Twilio Voice: als Status-Callback (verpasst = no-answer/busy/failed/canceled) oder als Voice-URL mit Ansage
+const xml = (s) => `<?xml version="1.0" encoding="UTF-8"?><Response>${s}</Response>`;
+const sayDe = (t, text) => `<Say language="de-DE" voice="${escHtml(t.tools.rueckruf.ttsVoice || 'Polly.Vicki')}">${escHtml(text)}</Say>`;
+const MISSED = ['no-answer', 'busy', 'failed', 'canceled'];
+
+// Twilio Voice-URL der Rufnummer (schlüsselfertig): stellt zum Handy/Festnetz des Betriebs durch;
+// nimmt niemand ab, folgt eine Ansage und die Rückruf-Automatik startet.
+r.post('/hooks/twilio/:tenant/incoming', async (req, res, { params, body }) => {
+  const t = tenantOr404(params.tenant);
+  twilioCheck(req, t, body);
+  const cfg = t.tools.rueckruf;
+  const action = `${config.baseUrl()}/hooks/twilio/${t.id}/voice`;
+  if (!cfg.forwardTo) {
+    await rueckruf.missedCall(t, { phone: body.From || body.Caller });
+    return send(res, 200, xml(sayDe(t, cfg.voiceMessage || `Willkommen bei ${t.name}. Wir sind gerade im Einsatz. Sie erhalten sofort eine SMS, über die Sie einen Rückruftermin wählen können.`) + '<Hangup/>'), { 'Content-Type': 'text/xml' });
+  }
+  const targets = [].concat(cfg.forwardTo).map((n) => `<Number>${escHtml(n)}</Number>`).join('');
+  send(res, 200, xml(`<Dial timeout="${Number(cfg.ringSeconds) || 20}" action="${escHtml(action)}" method="POST" answerOnBridge="true">${targets}</Dial>`), { 'Content-Type': 'text/xml' });
+});
+
+// Dial-Action bzw. Status-Callback: verpasst = no-answer/busy/failed/canceled
+// Wichtig: DialCallStatus (Ergebnis der Weiterleitung) hat Vorrang vor CallStatus (Status des Eingangsanrufs).
 r.post('/hooks/twilio/:tenant/voice', async (req, res, { params, body }) => {
   const t = tenantOr404(params.tenant);
   twilioCheck(req, t, body);
-  const status = String(body.CallStatus || body.DialCallStatus || '').toLowerCase();
-  if (['no-answer', 'busy', 'failed', 'canceled'].includes(status)) await rueckruf.missedCall(t, { phone: body.From || body.Caller });
-  if (status === 'ringing' && t.tools.rueckruf.voiceMessage) {
+  const isDialAction = body.DialCallStatus !== undefined;
+  const status = String(isDialAction ? body.DialCallStatus : body.CallStatus || '').toLowerCase();
+  if (MISSED.includes(status)) {
     await rueckruf.missedCall(t, { phone: body.From || body.Caller });
-    const say = `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="de-DE">${escHtml(t.tools.rueckruf.voiceMessage)}</Say><Hangup/></Response>`;
-    return send(res, 200, say, { 'Content-Type': 'text/xml' });
+    // Anrufer ist bei einer Dial-Action noch in der Leitung (außer er hat selbst aufgelegt)
+    if (isDialAction && status !== 'canceled') {
+      const msg = t.tools.rueckruf.voiceMessage || `Leider ist bei ${t.name} gerade niemand erreichbar. Sie erhalten sofort eine SMS, über die Sie einen Rückruftermin wählen können. Auf Wiederhören!`;
+      return send(res, 200, xml(sayDe(t, msg) + '<Hangup/>'), { 'Content-Type': 'text/xml' });
+    }
   }
   send(res, 200, TWIML_EMPTY, { 'Content-Type': 'text/xml' });
 });
@@ -314,7 +337,7 @@ r.get('/api/admin/:tenant/setup', (req, res, { params, query }) => {
     webhooks: Object.fromEntries(Object.keys(EVENTS).map((e) => [e, `${b}/api/v1/${t.id}/events/${e}`])),
     importCustomers: `${b}/api/v1/${t.id}/import/customers`,
     inboundEmail: `${b}/api/v1/${t.id}/inbound/email`,
-    twilio: { voiceStatusCallback: `${b}/hooks/twilio/${t.id}/voice`, messaging: `${b}/hooks/twilio/${t.id}/sms` },
+    twilio: { voiceUrl: `${b}/hooks/twilio/${t.id}/incoming`, voiceStatusCallback: `${b}/hooks/twilio/${t.id}/voice`, messaging: `${b}/hooks/twilio/${t.id}/sms` },
     sipgate: `${b}/hooks/sipgate/${t.id}?key=API_KEY`,
     placetel: `${b}/hooks/placetel/${t.id}?key=API_KEY`,
     icsFeed: t.calendar.icsToken ? `${b}/cal/${t.id}/${t.calendar.icsToken}.ics` : '(calendar.icsToken setzen)',

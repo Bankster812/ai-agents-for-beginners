@@ -36,7 +36,7 @@ const DEFAULTS = {
     tone: 'freundlich, kompetent, kurz, Sie-Form, kein Marketing-Sprech'
   },
   tools: {
-    rueckruf: { enabled: true, delaySeconds: 20, followupMinutes: 120, channel: null },
+    rueckruf: { enabled: true, delaySeconds: 20, followupMinutes: 120, channel: null, forwardTo: null, ringSeconds: 20, voiceMessage: '' },
     bewertung: { enabled: true, delayHours: 2, reminderDays: 3, reviewUrl: '', channel: null },
     anfragen: { enabled: true, followupDays: [1, 3, 7], channel: null },
     reaktivierung: { enabled: true, days: [30, 60, 90], offer: '', requireConsent: true, channel: null },

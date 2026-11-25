@@ -167,6 +167,21 @@ test('Rückruf-Automatik: Telefonanlagen-Webhooks (sipgate, Placetel, Twilio)', 
   assert.equal((await call('POST', '/hooks/sipgate/testbetrieb', { event: 'hangup' })).status, 401, 'ohne Key abgewiesen');
 });
 
+test('Twilio schlüsselfertig: Weiterleitung per <Dial>, keine Antwort -> Ansage + SMS (DialCallStatus hat Vorrang)', async () => {
+  config.register({ ...TENANT, id: 'twdial', tools: { ...TENANT.tools, rueckruf: { forwardTo: '+491701112233', ringSeconds: 15 } } });
+  const inc = await call('POST', '/hooks/twilio/twdial/incoming', { From: '+491715556666', CallStatus: 'ringing' });
+  assert.match(inc.json, /<Dial timeout="15" action="http:\/\/test\.local\/hooks\/twilio\/twdial\/voice"/);
+  assert.match(inc.json, /<Number>\+491701112233<\/Number>/);
+  // Twilio sendet bei der Dial-Action CallStatus=in-progress UND DialCallStatus=no-answer
+  const act = await call('POST', '/hooks/twilio/twdial/voice', { From: '+491715556666', CallStatus: 'in-progress', DialCallStatus: 'no-answer' });
+  assert.match(act.json, /<Say language="de-DE"/);
+  assert.ok(db.one("SELECT id FROM contacts WHERE tenant='twdial' AND phone=?", '+491715556666'), 'Rückruf-Automatik gestartet');
+  // Abgenommen -> nichts passiert
+  const ok = await call('POST', '/hooks/twilio/twdial/voice', { From: '+491715557777', CallStatus: 'in-progress', DialCallStatus: 'completed' });
+  assert.doesNotMatch(ok.json, /Say/);
+  assert.equal(db.one("SELECT id FROM contacts WHERE tenant='twdial' AND phone=?", '+491715557777'), undefined);
+});
+
 test('Twilio-Signatur wird geprüft, wenn authToken gesetzt ist', async () => {
   const t = config.register({ ...TENANT, id: 'twiliotest', channels: { ...TENANT.channels, sms: { provider: 'console', authToken: 'secret' } } });
   const params = { From: '+491710000009', Body: 'Hallo' };
