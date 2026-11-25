@@ -329,7 +329,7 @@ def main():
         pen_rows.append(info)
     pen = pd.DataFrame(pen_rows)
     elig = pen[(pen.has_data) & (pen.n >= 252) & (pen.min_raw_close < 5)].copy()
-    elig = elig.sample(n=min(200, len(elig)), random_state=8).sort_values("symbol")
+    elig = elig.sample(n=min(100, len(elig)), random_state=8).sort_values("symbol")
     pen["in_sample"] = pen.symbol.isin(elig.symbol)
     pen.to_csv(OUT / "penny_candidates_screen.csv", index=False)
     for s in elig.symbol:
