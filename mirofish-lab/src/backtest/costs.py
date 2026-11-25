@@ -127,11 +127,53 @@ class Adapter03:
 
 def load_default_cost_model(prefer_03: bool = True):
     if prefer_03 and (SRC / "cost_model.py").exists():
-        if str(SRC) not in sys.path:
-            sys.path.insert(0, str(SRC))
         try:
-            mod = importlib.import_module("cost_model")
-            return Adapter03(mod)
+            return Cost03()
         except Exception as e:  # pragma: no cover - depends on 03's file
             print(f"[backtest.costs] could not adapt 03 cost_model ({e}); using placeholder", file=sys.stderr)
     return PlaceholderCost()
+
+
+class Cost03:
+    """Direct binding to 03's src/cost_model.py (p75 slippage tables + per-category taker fee).
+
+    * liquidity = cost_model.volume_at_time_proxy(lifetime volume, start, end, t)  (ex-ante proxy, ~ frac**2)
+    * slippage is side-aware (mirrored books), includes half-spread + depth impact
+    * fee per share = rate(category, regime) * p * (1-p)   (regime 'conservative' = max of 2026 schedules;
+      'pre-2026' = 0, historically accurate for most of TRAIN/TEST)
+    * executable(): 03's rule -- skip trades with p75 slippage > 3c or > 15% of the token price
+    """
+
+    def __init__(self, quantile: str = "p75", regime: str = "conservative", use_time_proxy: bool = True,
+                 skip_unexecutable: bool = True):
+        if str(SRC) not in sys.path:
+            sys.path.insert(0, str(SRC))
+        self.cm = importlib.import_module("cost_model")
+        self.q, self.regime, self.tp, self.skip = quantile, regime, use_time_proxy, skip_unexecutable
+        self.name = f"03:{quantile}/fees={regime}" + ("/volproxy" if use_time_proxy else "")
+
+    _CAT = {"macro": "economics"}
+
+    def _liq(self, meta):
+        v = float(meta.get("volume_usd") or 0.0)
+        if not self.tp:
+            return v
+        return self.cm.volume_at_time_proxy(v, meta.get("start_ts", 0), meta.get("end_ts", 1), meta.get("ts", 0))
+
+    def slip(self, side, mid, notional, meta):
+        return self.cm.slippage(side, mid, notional, self._liq(meta), self.q)
+
+    def executable(self, side, mid, notional, meta):
+        if not self.skip:
+            return True
+        return self.cm.is_executable(side, mid, notional, self._liq(meta), quantile=self.q)
+
+    def half_spread(self, mid, meta):
+        return self.cm.half_spread(mid, self._liq(meta), self.q)
+
+    def impact(self, mid, notional_usd, meta):
+        return self.slip("buy", mid, notional_usd, meta) - self.half_spread(mid, meta)
+
+    def fee_per_share(self, px, meta, side="BUY"):
+        cat = self._CAT.get(meta.get("category"), meta.get("category"))
+        return self.cm.fee_rate(cat, self.regime) * px * (1.0 - px)

@@ -50,8 +50,8 @@ def _before_end(store, mk, hours_before, cond, side_fn, w, exit_rule, name, max_
     p = asof_prices(store, mk.market_id.to_numpy(), ts, max_age_h)
     ok = np.isfinite(p) & cond(p, mk)
     # the market must still be open at the signal time (otherwise nothing to trade); this is known at ts
-    ok &= mk.resolved_ts.to_numpy(np.int64) > ts
-    ok &= mk.first_price_ts.to_numpy(np.int64) < ts
+    ok &= mk.resolved_ts.astype('float').fillna(0).to_numpy() > ts
+    ok &= mk.first_price_ts.astype('float').fillna(9e18).to_numpy() < ts
     if not ok.any():
         return _sig([], [], "YES", w, exit_rule, name)
     sides = side_fn(p[ok])
@@ -130,7 +130,7 @@ def s7b_always_no(store, mk, hours_before, w=0.02):
 def s7c_random(store, mk, rng, w=0.02, t_min=None, t_max=None, hold="resolve"):
     """One random entry per market: uniform time in [first_price+6h, min(end, resolved)-1h] (clipped to window),
     random side, hold to resolution (or hold:<dur>)."""
-    a = mk.first_price_ts.to_numpy(np.int64) + 6 * H
+    a = mk.first_price_ts.astype('float').fillna(9e15).to_numpy().astype(np.int64) + 6 * H
     b = np.minimum(mk.end_ts.to_numpy(np.int64), mk.resolved_ts.to_numpy(np.int64)) - H
     if t_min is not None:
         a = np.maximum(a, t_min)
@@ -157,7 +157,7 @@ def sa2_move(store, mk, d, hours_before, lookback_h, mode, w=0.02):
     p0 = asof_prices(store, mk.market_id.to_numpy(), ts - int(lookback_h * H), 0.5)
     mv = p1 - p0
     ok = np.isfinite(mv) & (np.abs(mv) >= d) & (p1 >= 0.01) & (p1 <= 0.99)
-    ok &= mk.resolved_ts.to_numpy(np.int64) > ts
+    ok &= mk.resolved_ts.astype('float').fillna(0).to_numpy() > ts
     up = mv[ok] > 0
     side = np.where(up, "YES", "NO") if mode == "momentum" else np.where(up, "NO", "YES")
     return _sig(mk.market_id.to_numpy()[ok], ts[ok], side, w, "resolve",

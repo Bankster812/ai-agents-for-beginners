@@ -304,8 +304,11 @@ def run_backtest(signal_df: pd.DataFrame, config: Optional[BacktestConfig] = Non
             skipped.append((mid_, c["signal_ts"], c["side"], "size_cap")); continue
         m0 = c["entry_mid"]
         cmeta = dict(meta); cmeta["ts"] = t; cmeta["side"] = c["side"]
+        if hasattr(cost, "executable") and not cost.executable("buy", m0, B, cmeta):
+            skipped.append((mid_, c["signal_ts"], c["side"], "unexecutable")); continue
         hs = cost.half_spread(m0, cmeta)
-        px = min(m0 + hs + cost.impact(m0, B, cmeta), 0.999)
+        sl = cost.slip("buy", m0, B, cmeta) if hasattr(cost, "slip") else hs + cost.impact(m0, B, cmeta)
+        px = min(m0 + sl, 0.999)
         fps = cost.fee_per_share(px, cmeta, "BUY")
         shares = B / (px + fps)
         entry_fee = shares * fps
@@ -316,8 +319,10 @@ def run_backtest(signal_df: pd.DataFrame, config: Optional[BacktestConfig] = Non
             j = c["exit_j"]
             mj = float(py[j]) if c["side"] == "YES" else 1.0 - float(py[j])
             cmeta2 = dict(meta); cmeta2["ts"] = int(ts[j]); cmeta2["side"] = c["side"]
-            hs2 = cost.half_spread(mj, cmeta2)
-            xpx = max(mj - hs2 - cost.impact(mj, shares * mj, cmeta2), 0.001)
+            if hasattr(cost, "slip"):
+                xpx = max(mj - cost.slip("sell", mj, shares * mj, cmeta2), 0.001)
+            else:
+                xpx = max(mj - cost.half_spread(mj, cmeta2) - cost.impact(mj, shares * mj, cmeta2), 0.001)
             xfee = shares * cost.fee_per_share(xpx, cmeta2, "SELL")
             close_value = shares * xpx - xfee
             close_ts = int(ts[j]); exit_mid = mj

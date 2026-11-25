@@ -181,7 +181,7 @@ def summarize(res, rf: float | None = None) -> dict:
         if n:
             out["turnover_x_per_year"] = float(t.entry_cost.sum() / eq.mean() / max(years, 1e-9))
             # capital utilisation: average share of equity deployed (cost basis)
-            day_ends = (eq.index + pd.Timedelta(days=1)).astype("int64") // 10 ** 9
+            day_ends = (eq.index + pd.Timedelta(days=1)).as_unit("s").asi8
             dep = np.zeros(len(eq))
             fi = np.searchsorted(day_ends, t.fill_ts.to_numpy(), side="right")
             ci = np.searchsorted(day_ends, t.close_ts.to_numpy(), side="right")
