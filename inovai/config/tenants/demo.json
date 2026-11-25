@@ -1,0 +1,64 @@
+{
+  "id": "demo",
+  "name": "Muster Haustechnik GmbH",
+  "branche": "Heizung, Sanitär & Elektro",
+  "slogan": "Ihr Meisterbetrieb für Wärme, Wasser und Strom in Musterstadt",
+  "apiKey": "demo-api-key-bitte-aendern",
+  "adminToken": "demo-admin-bitte-aendern",
+  "phone": "+49 30 1234567",
+  "emergencyPhone": "+49 170 7654321 (24h-Notdienst)",
+  "email": "info@muster-haustechnik.de",
+  "website": "https://www.muster-haustechnik.de",
+  "address": "Musterstraße 12, 10115 Musterstadt",
+  "serviceArea": "Musterstadt und 30 km Umkreis",
+  "signature": "– Ihr Team von Muster Haustechnik",
+  "services": [
+    { "name": "Heizungswartung", "price": "ab 149 € inkl. MwSt.", "duration": "ca. 1,5 Std.", "description": "Gas-, Öl- und Pelletheizungen aller gängigen Hersteller" },
+    { "name": "Wärmepumpen-Beratung", "price": "kostenlos vor Ort", "duration": "ca. 1 Std.", "description": "inkl. Fördermittel-Check (BEG/KfW)" },
+    { "name": "Badsanierung", "price": "individuelles Angebot", "description": "Planung bis Fertigstellung aus einer Hand, barrierefreie Bäder" },
+    { "name": "Rohrreinigung & Leckortung", "price": "ab 89 €", "description": "auch kurzfristig" },
+    { "name": "E-Check & Elektroinstallation", "price": "E-Check ab 119 €", "description": "Zählerschränke, Wallboxen, Sicherungen" }
+  ],
+  "facts": {
+    "Zahlungsarten": "Überweisung, EC-Karte, Barzahlung",
+    "Anfahrt": "Innerhalb Musterstadt kostenlos, im Umkreis 0,80 €/km",
+    "Notdienst-Zuschlag": "Nachts und am Wochenende 60 € zzgl. Arbeitszeit",
+    "Gründung": "1998, Meisterbetrieb, 14 Mitarbeitende",
+    "Hersteller": "Viessmann, Vaillant, Buderus, Wolf"
+  },
+  "faq": [
+    { "q": "Wie schnell können Sie kommen?", "a": "Bei Notfällen meist am selben Tag, reguläre Termine in der Regel innerhalb von 3–5 Werktagen." },
+    { "q": "Machen Sie kostenlose Angebote?", "a": "Ja, Angebote und Vor-Ort-Besichtigungen für Sanierungen sind kostenlos." },
+    { "q": "Helfen Sie bei Förderanträgen?", "a": "Ja, wir prüfen BEG/KfW-Förderungen und unterstützen beim Antrag." }
+  ],
+  "timezone": "Europe/Berlin",
+  "channels": {
+    "order": ["sms", "email"],
+    "sms": { "provider": "console" },
+    "email": { "provider": "console", "from": "info@muster-haustechnik.de" }
+  },
+  "notify": { "email": "chef@muster-haustechnik.de" },
+  "calendar": {
+    "slotMinutes": 30,
+    "leadTimeHours": 2,
+    "horizonDays": 21,
+    "icsToken": "demo-kalender-token"
+  },
+  "officeHours": {
+    "mon": [["07:30", "17:00"]], "tue": [["07:30", "17:00"]], "wed": [["07:30", "17:00"]],
+    "thu": [["07:30", "17:00"]], "fri": [["07:30", "14:00"]], "sat": [], "sun": []
+  },
+  "tools": {
+    "bewertung": { "reviewUrl": "https://search.google.com/local/writereview?placeid=DEINE_PLACE_ID" },
+    "reaktivierung": { "offer": "Als Dankeschön: 10 % auf Ihre nächste Wartung." }
+  },
+  "chatbot": {
+    "title": "Muster Haustechnik Assistent",
+    "color": "#d9480f",
+    "greeting": "Hallo! 👋 Ich bin der digitale Assistent von Muster Haustechnik. Fragen Sie mich alles zu Heizung, Bad & Elektro – per Text oder per Mikrofon. Ich kann auch direkt einen Termin für Sie buchen.",
+    "quickReplies": ["Termin buchen", "Was kostet eine Wartung?", "Notfall!", "Rückruf anfordern"],
+    "privacyUrl": "https://www.muster-haustechnik.de/datenschutz",
+    "knowledge": "Wir bieten Wartungsverträge ab 12,90 €/Monat an (inkl. jährlicher Wartung und bevorzugter Terminvergabe). Wärmepumpen installieren wir seit 2012, über 300 Anlagen in der Region."
+  },
+  "ai": { "enabled": true, "personalize": true }
+}

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>INOVai Dashboard</title><meta name="robots" content="noindex">
+<style>
+*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+body{margin:0;background:#f4f5f7;color:#1c1c1c}[hidden]{display:none!important}.top .pill{background:rgba(255,255,255,.15);color:#fff}.top .pill.on{background:#2b8a3e;color:#fff}
+.top{background:#0b1f3a;color:#fff;padding:14px 22px;display:flex;align-items:center;gap:16px}.top b{font-size:18px}.top .sp{flex:1}.top select,.top button{border-radius:8px;border:0;padding:7px 10px}
+.login{max-width:380px;margin:80px auto;background:#fff;padding:26px;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);display:flex;flex-direction:column;gap:10px}
+input,textarea,select{border:1px solid #d5d9df;border-radius:9px;padding:9px 10px;font-size:14px;width:100%}
+button{background:#0f62fe;color:#fff;border:0;border-radius:9px;padding:9px 14px;font-size:14px;cursor:pointer}button.g{background:#eef0f3;color:#222}button.r{background:#e03131}
+nav{display:flex;gap:4px;padding:10px 22px;background:#fff;border-bottom:1px solid #e6e8eb;flex-wrap:wrap}nav a{padding:8px 12px;border-radius:8px;cursor:pointer;font-size:14px;color:#333;text-decoration:none}nav a.on{background:#0f62fe;color:#fff}
+main{padding:20px 22px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.kpi{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}.kpi b{display:block;font-size:28px}.kpi span{font-size:13px;color:#667}
+.card{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,.04);margin-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}th,td{text-align:left;padding:8px;border-bottom:1px solid #eef0f3;vertical-align:top}th{background:#fafbfc;font-weight:600}
+td pre{white-space:pre-wrap;margin:0;font-family:inherit;max-width:520px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#eef0f3}.pill.on{background:#d3f9d8;color:#2b8a3e}.pill.off{background:#ffe3e3;color:#c92a2a}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}.row>*{flex:1;min-width:140px}
+code,pre.code{background:#0b1f3a;color:#d0ebff;border-radius:8px;padding:10px;display:block;white-space:pre-wrap;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+.out{font-size:12px;background:#f8f9fa;border-radius:8px;padding:8px;white-space:pre-wrap;max-height:220px;overflow:auto}
+h3{margin:0 0 10px;font-size:16px}
+</style></head><body>
+<div id="login" class="login">
+  <h2 style="margin:0">INOVai Dashboard</h2>
+  <input id="lt" placeholder="Kunden-ID (z. B. demo)" value="demo">
+  <input id="lk" placeholder="Admin-Token" type="password">
+  <button onclick="login()">Anmelden</button><div id="le" style="color:#c92a2a;font-size:13px"></div>
+</div>
+<div id="app" hidden>
+<div class="top"><b>INOVai</b><span id="tn"></span><span class="sp"></span><span id="aim" class="pill"></span><button class="g" onclick="logout()">Abmelden</button></div>
+<nav id="nav"></nav><main id="main"></main>
+</div>
+<script>
+var S={t:localStorage.getItem('inovai_admin_t')||'',k:localStorage.getItem('inovai_admin_k')||''},TAB='overview';
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function dt(s){return s?new Date(s).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'}):''}
+async function api(p,o){o=o||{};var r=await fetch('/api/admin/'+S.t+p,{method:o.method||'GET',headers:{'Authorization':'Bearer '+S.k,'Content-Type':'application/json'},body:o.body?JSON.stringify(o.body):undefined});var j=await r.json().catch(()=>({}));if(r.status===401){logout();throw new Error('auth')}return j}
+async function login(){S.t=$('lt').value.trim();S.k=$('lk').value.trim();try{var o=await api('/overview');if(!o.tenant)throw 0;localStorage.setItem('inovai_admin_t',S.t);localStorage.setItem('inovai_admin_k',S.k);start()}catch(e){$('le').textContent='Anmeldung fehlgeschlagen'}}
+function logout(){localStorage.removeItem('inovai_admin_k');$('app').hidden=true;$('login').hidden=false}
+var TABS={overview:'Übersicht',test:'Test & Demo',contacts:'Kontakte',appointments:'Termine',messages:'Nachrichten',offers:'Angebote',jobs:'Geplante Jobs',conversations:'Chats',knowledge:'Wissensbasis',setup:'Integration'};
+function start(){$('login').hidden=true;$('app').hidden=false;$('nav').innerHTML=Object.entries(TABS).map(([k,v])=>'<a data-t="'+k+'">'+v+'</a>').join('');document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.t));show(TAB)}
+async function show(t){TAB=t;document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.t===t));$('main').innerHTML='Lade …';await (R[t]||R.list)(t)}
+var NAMES={rueckruf:'Rückruf-Automatik',bewertung:'Bewertungs-Booster',anfragen:'Anfragen-Nachfasser',reaktivierung:'Alt-Kunden-Rückholer',angebote:'Angebots-Erinnerung'};
+var R={
+ async overview(){var o=await api('/overview');$('tn').textContent=o.tenant.name+' · '+(o.tenant.branche||'');$('aim').textContent=o.tenant.ai?'KI aktiv ('+o.tenant.model+')':'Vorlagen-/Regel-Modus';$('aim').className='pill '+(o.tenant.ai?'on':'');
+  var L=o.last30,k=[['Verpasste Anrufe',L.verpassteAnrufe],['Neue Anfragen',L.neueAnfragen],['Gebuchte Termine',L.termine],['Bewertungs-Klicks',L.bewertungsKlicks],['Angebote verschickt',L.angeboteVerschickt],['Angebote angenommen',L.angeboteAngenommen],['Kunden zurückgewonnen',L.rueckgewonnen],['Website-Chats',L.chats],['Nachrichten raus',L.nachrichtenRaus],['Antworten rein',L.antwortenRein]];
+  $('main').innerHTML='<p style="color:#667;margin-top:0">Letzte 30 Tage</p><div class="grid">'+k.map(x=>'<div class="kpi"><b>'+x[1]+'</b><span>'+x[0]+'</span></div>').join('')+'</div><br><div class="card"><h3>Aktive Produkte</h3>'+Object.entries(o.tenant.tools).map(([k,v])=>'<span class="pill '+(v?'on':'off')+'" style="margin:3px">'+NAMES[k]+'</span>').join('')+' <span class="pill on" style="margin:3px">Website-Chatbot</span><p style="font-size:13px;color:#667">Kontakte: '+o.kontakte+' · geplante Nachrichten: '+o.jobsPending+' · Wissensbasis: '+o.wissen.chunks+' Abschnitte'+(o.tenant.demoTimeScale>1?' · <b>Demo-Zeitraffer aktiv (×'+o.tenant.demoTimeScale+')</b>':'')+'</p></div>'},
+ async test(){$('main').innerHTML=`<div class="card"><h3>Ereignisse simulieren (wie aus Telefonanlage/CRM/Kasse)</h3>
+ <div class="row"><input id="sn" placeholder="Name" value="Jonas Beispiel"><input id="sp" placeholder="Mobilnummer" value="0171 2345678"><input id="se" placeholder="E-Mail" value="jonas@example.com"></div>
+ <div class="row"><button onclick="sim('missed-call')">📞 Verpasster Anruf</button><button onclick="sim('job-completed',{consent:'ja'})">⭐ Auftrag erledigt → Bewertung</button><button onclick="sim('lead',{message:'Ich interessiere mich für eine Wärmepumpe.',service:'Wärmepumpe',consent:'ja'})">📨 Neue Anfrage</button></div>
+ <div class="row"><input id="ot" placeholder="Angebotstitel" value="Dachsanierung"><input id="oa" placeholder="Summe" value="8450"><input id="oi" placeholder="Angebots-Nr." value="A-2026-001"><button onclick="sim('offer-sent',{title:$('ot').value,amount:$('oa').value,offer_id:$('oi').value})">📄 Angebot verschickt</button><button class="g" onclick="sim('offer-status',{offer_id:$('oi').value,status:'angenommen'})">✔ angenommen</button></div>
+ <div class="row"><input id="it" placeholder="Antwort des Kunden" value="Ja gerne, passt morgen Vormittag?"><button onclick="simIn()">💬 Kunde antwortet per SMS</button><button class="g" onclick="api('/simulate/inbound',{method:'POST',body:{from:$('sp').value,text:'STOP'}}).then(out)">STOP senden</button></div></div>
+ <div class="card"><h3>Alt-Kunden-Rückholer</h3><p style="font-size:13px;color:#667;margin-top:0">CSV (Semikolon oder Komma) mit Spalten wie name;telefon;email;letzter_besuch;einwilligung</p>
+ <textarea id="csv" rows="4">name;telefon;email;letzter_besuch;einwilligung
+Julia Muster;0172 1111111;julia@example.com;01.08.2026;ja
+Tom Test;0151 2222222;;15.10.2026;ja
+Ohne Einwilligung;0160 3333333;;01.06.2026;nein</textarea>
+ <div class="row"><button onclick="imp()">CSV importieren</button><button onclick="api('/simulate/reaktivierung',{method:'POST'}).then(out)">Jetzt prüfen & anschreiben</button></div></div>
+ <div class="card"><h3>Zeitsteuerung</h3><div class="row"><button onclick="ff(0)">Fällige Jobs jetzt ausführen</button><button class="g" onclick="ff(24)">+1 Tag vorspulen</button><button class="g" onclick="ff(72)">+3 Tage</button><button class="g" onclick="ff(240)">+10 Tage</button></div></div>
+ <div class="card"><h3>Ergebnis</h3><div id="out" class="out">–</div></div>`},
+ async contacts(){var rows=await api('/list/contacts');$('main').innerHTML=tbl(rows,[['name','Name'],['phone','Telefon'],['email','E-Mail'],['status','Status'],['source','Quelle'],[r=>r.marketing_consent?'✔':'–','Einw.'],[r=>r.opted_out?'abgemeldet':'','Opt-out'],[r=>dt(r.last_visit),'Letzter Besuch'],[r=>'<button class="g" onclick="st(\''+r.id+'\',\'kunde\')">Kunde</button> <button class="g" onclick="exp(\''+r.id+'\')">Export</button> <button class="r" onclick="del(\''+r.id+'\')">Löschen</button>','DSGVO']])},
+ async appointments(){var rows=await api('/list/appointments');$('main').innerHTML=tbl(rows,[[r=>dt(r.start),'Beginn'],['contact_name','Kunde'],['phone','Telefon'],['reason','Anliegen'],['source','Quelle'],['status','Status'],[r=>r.status!=='storniert'?'<button class="r" onclick="cx(\''+r.id+'\')">Stornieren</button>':'','']])},
+ async messages(){var rows=await api('/list/messages');$('main').innerHTML=tbl(rows,[[r=>dt(r.created_at),'Zeit'],[r=>r.direction==='out'?'➡️ raus':'⬅️ rein','Richtung'],['channel','Kanal'],['tool','Tool'],['contact_name','Kontakt'],[r=>'<pre>'+esc(r.body)+'</pre>','Inhalt'],[r=>esc(r.status)+(r.error?'<br><small style="color:#c92a2a">'+esc(r.error)+'</small>':''),'Status']],true)},
+ async offers(){var rows=await api('/list/offers');$('main').innerHTML=tbl(rows,[['external_id','Nr.'],['title','Titel'],['contact_name','Kunde'],[r=>r.amount!=null?r.amount.toLocaleString('de-DE',{style:'currency',currency:'EUR'}):'','Summe'],['status','Status'],[r=>dt(r.created_at),'Verschickt']])},
+ async jobs(){var rows=await api('/list/jobs');$('main').innerHTML=tbl(rows,[[r=>dt(r.run_at),'Geplant für'],[r=>NAMES[r.tool]||r.tool,'Tool'],[r=>r.step+1,'Schritt'],['contact_name','Kontakt'],['status','Status'],['last_error','Hinweis']])},
+ async conversations(){var rows=await api('/list/conversations');$('main').innerHTML=rows.map(c=>'<div class="card"><b>'+esc(c.channel)+'</b> · '+dt(c.updated_at)+'<div class="out">'+JSON.parse(c.history||'[]').map(m=>(m.role==='user'?'👤 ':'🤖 ')+esc(m.content)).join('\n')+'</div></div>').join('')||'Noch keine Gespräche.'},
+ async knowledge(){var rows=await api('/list/knowledge');$('main').innerHTML='<div class="card"><h3>Website einlesen</h3><div class="row"><input id="cu" placeholder="https://www.kunde.de (leer = konfigurierte Website)"><button onclick="crawl()">Website crawlen</button></div><h3>Wissen manuell ergänzen</h3><input id="kt" placeholder="Titel"><br><br><textarea id="kc" rows="5" placeholder="z. B. Preise, Ablauf, Garantie, Team, Parkplätze …"></textarea><br><br><button onclick="addK()">Hinzufügen</button> <button class="r" onclick="api(\'/knowledge\',{method:\'DELETE\'}).then(()=>show(\'knowledge\'))">Manuelles Wissen löschen</button><div id="out" class="out" style="margin-top:8px">–</div></div>'+tbl(rows,[['source','Quelle'],['title','Titel'],[r=>'<pre>'+esc(r.preview)+'…</pre>','Vorschau'],['size','Zeichen']],true)},
+ async setup(){var s=await api('/setup');$('main').innerHTML='<div class="card"><h3>1. Chatbot auf der Website einbinden (eine Zeile vor &lt;/body&gt;)</h3><pre class="code">'+esc(s.embed)+'</pre></div><div class="card"><h3>2. Buchungsseite</h3><pre class="code">'+esc(s.bookingPage)+'</pre></div><div class="card"><h3>3. Telefonanlage → Rückruf-Automatik</h3><pre class="code">Twilio Voice Status-Callback: '+esc(s.twilio.voiceStatusCallback)+'\nTwilio Messaging (eingehende SMS/WhatsApp): '+esc(s.twilio.messaging)+'\nsipgate.io Push-API: '+esc(s.sipgate)+'\nPlacetel Notify-URL: '+esc(s.placetel)+'</pre></div><div class="card"><h3>4. Webhooks (CRM, Kasse, Make, Zapier, n8n)</h3><pre class="code">'+esc(s.apiKeyHeader)+'\n\n'+Object.entries(s.webhooks).map(([k,v])=>k.padEnd(16)+' POST '+v).join('\n')+'\nimport/customers  POST '+esc(s.importCustomers)+'\ninbound/email     POST '+esc(s.inboundEmail)+'</pre></div><div class="card"><h3>5. Kontaktformular (HTML, ohne Programmierung)</h3><pre class="code">'+esc(s.leadForm)+'</pre></div><div class="card"><h3>6. Kalender-Abo (Google/Outlook/Apple)</h3><pre class="code">'+esc(s.icsFeed)+'</pre></div>'},
+ async list(t){var rows=await api('/list/'+t);$('main').innerHTML=tbl(rows,Object.keys(rows[0]||{}).map(k=>[k,k]))}
+};
+function tbl(rows,cols,raw){if(!rows.length)return '<div class="card">Noch keine Einträge.</div>';return '<table><tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr>'+rows.map(r=>'<tr>'+cols.map(c=>{var v=typeof c[0]==='function'?c[0](r):esc(r[c[0]]);return '<td>'+(v==null?'':v)+'</td>'}).join('')+'</tr>').join('')+'</table>'}
+function out(j){$('out').textContent=JSON.stringify(j,null,2)}
+function base(){return{name:$('sn').value,phone:$('sp').value,email:$('se').value}}
+function sim(e,extra){api('/simulate/'+e,{method:'POST',body:Object.assign(base(),extra||{})}).then(out)}
+function simIn(){api('/simulate/inbound',{method:'POST',body:{from:$('sp').value,text:$('it').value}}).then(out)}
+function ff(h){api('/scheduler/run',{method:'POST',body:{fastForwardHours:h}}).then(out)}
+function imp(){var lines=$('csv').value.trim().split('\n');var h=lines[0].split(/[;,]/).map(x=>x.trim().toLowerCase());var rows=lines.slice(1).map(l=>{var v=l.split(/[;,]/);return Object.fromEntries(h.map((k,i)=>[k,(v[i]||'').trim()]))});api('/simulate/import',{method:'POST',body:{rows}}).then(out)}
+function st(id,s){api('/contacts/'+id,{method:'PATCH',body:{status:s}}).then(()=>show('contacts'))}
+function del(id){if(confirm('Kontakt und alle zugehörigen Daten endgültig löschen (DSGVO Art. 17)?'))api('/contacts/'+id,{method:'DELETE'}).then(()=>show('contacts'))}
+function exp(id){api('/contacts/'+id+'/export').then(j=>{var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,2)],{type:'application/json'}));a.download='auskunft-'+id+'.json';a.click()})}
+function cx(id){if(confirm('Termin stornieren?'))api('/appointments/'+id+'/cancel',{method:'POST'}).then(()=>show('appointments'))}
+function crawl(){$('out').textContent='Crawle … (kann bis zu 1 Minute dauern)';var u=$('cu').value.trim();api('/knowledge/crawl',{method:'POST',body:u?{urls:[u]}:{}}).then(j=>{out(j);setTimeout(()=>show('knowledge'),1500)})}
+function addK(){api('/knowledge',{method:'POST',body:{title:$('kt').value,content:$('kc').value}}).then(j=>{out(j);setTimeout(()=>show('knowledge'),800)})}
+if(S.k){$('lt').value=S.t;$('lk').value=S.k;login()}
+</script></body></html>

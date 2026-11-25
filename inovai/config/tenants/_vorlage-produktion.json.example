@@ -1,0 +1,29 @@
+{
+  "_hinweis": "Kopieren als <kunden-id>.json. Geheimnisse als env:VARIABLE in .env ablegen.",
+  "id": "kunde-xyz",
+  "name": "Kunde XYZ GmbH",
+  "branche": "z. B. Zahnarztpraxis",
+  "apiKey": "env:KUNDE_XYZ_API_KEY",
+  "adminToken": "env:KUNDE_XYZ_ADMIN_TOKEN",
+  "phone": "+49 ...",
+  "email": "info@kunde.de",
+  "website": "https://www.kunde.de",
+  "address": "Straße 1, 12345 Stadt",
+  "channels": {
+    "order": ["whatsapp", "sms", "email"],
+    "sms": { "accountSid": "env:TWILIO_ACCOUNT_SID", "authToken": "env:TWILIO_AUTH_TOKEN", "from": "+49..." },
+    "_sms_alternative_seven_io": { "provider": "seven", "apiKey": "env:SEVEN_API_KEY", "from": "KundeXYZ" },
+    "whatsapp": { "accountSid": "env:TWILIO_ACCOUNT_SID", "authToken": "env:TWILIO_AUTH_TOKEN", "from": "whatsapp:+49...", "templates": { "rueckruf": "HXxxxxxxxx", "anfragen": "HXxxxxxxxx" } },
+    "email": { "host": "smtp.ionos.de", "port": 587, "user": "env:SMTP_USER", "pass": "env:SMTP_PASS", "from": "Kunde XYZ <info@kunde.de>" }
+  },
+  "notify": { "email": "chef@kunde.de", "sms": "+49170...", "webhookUrl": "https://hook.eu1.make.com/...", "webhookSecret": "env:KUNDE_XYZ_WEBHOOK_SECRET" },
+  "calendar": { "slotMinutes": 30, "busyIcsUrl": "env:KUNDE_XYZ_GOOGLE_ICAL_URL", "icsToken": "env:KUNDE_XYZ_ICS_TOKEN" },
+  "tools": {
+    "rueckruf": { "enabled": true },
+    "bewertung": { "enabled": true, "reviewUrl": "https://search.google.com/local/writereview?placeid=..." },
+    "anfragen": { "enabled": true },
+    "reaktivierung": { "enabled": false },
+    "angebote": { "enabled": false }
+  },
+  "chatbot": { "enabled": true, "voice": true, "color": "#0f62fe", "privacyUrl": "https://www.kunde.de/datenschutz", "crawl": { "urls": ["https://www.kunde.de"], "maxPages": 40 } }
+}

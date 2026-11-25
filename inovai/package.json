@@ -1,0 +1,20 @@
+{
+  "name": "inovai-automation-suite",
+  "version": "1.0.0",
+  "description": "INOVai – schlüsselfertige KI-Automationen für deutsche KMU: Rückruf-Automatik, Bewertungs-Booster, Anfragen-Nachfasser, Alt-Kunden-Rückholer, Angebots-Erinnerung und Website-Chatbot mit Voice.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "INOVAI_DEMO=1 node --disable-warning=ExperimentalWarning src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
+    "e2e": "node --disable-warning=ExperimentalWarning test/e2e/widget.e2e.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
+    "nodemailer": "^10.1.4"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
