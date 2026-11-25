@@ -468,9 +468,97 @@ test('Sicherheit: Admin-Token nicht per URL, Brute-Force wird gedrosselt', async
   let last;
   for (let i = 0; i < 12; i++) last = await call('GET', '/api/admin/testbetrieb/overview', null, { Authorization: 'Bearer falsch' });
   assert.equal(last.status, 429);
+  require('../src/lib/http').rateLimit._reset();
 });
 
 test('Sicherheit: unsichere Demo-Zugangsdaten werden in Produktion nicht geladen', () => {
   assert.equal(config.insecure(config.register({ ...TENANT, id: 'unsicher', apiKey: 'demo-api-key-bitte-aendern' })), true);
   assert.equal(config.insecure(config.register({ ...TENANT, id: 'sicher', apiKey: 'a'.repeat(32), adminToken: 'b'.repeat(32), calendar: { ...TENANT.calendar, icsToken: 'c'.repeat(32) } })), false);
+});
+
+// ---------------- Logik-Fixes aus dem Code-Review ----------------
+test('Fix: Telefonnummern mit (0) und ohne + werden korrekt erkannt', () => {
+  assert.equal(channels.normalizePhone('+49 (0)170 1234567'), '+491701234567');
+  assert.equal(channels.normalizePhone('49 170 1234567'), '+491701234567');
+  assert.equal(channels.normalizePhone('+49 0170 1234567'), '+491701234567');
+  assert.equal(channels.normalizePhone('0170 1234567'), '+491701234567');
+});
+
+test('Fix: Abmeldung auch mitten im Satz; Antwort beendet Rückhol-Sequenz', async () => {
+  const { STOP_RE } = require('../src/tools/inbound');
+  for (const t of ['Bitte keine Nachrichten mehr', 'Bitte STOP', 'ich möchte mich abmelden']) assert.ok(STOP_RE.test(t), t);
+  assert.ok(!STOP_RE.test('Ja gerne, Dienstag passt'));
+  await call('POST', '/api/v1/testbetrieb/import/customers', [{ name: 'Reakt Antwort', telefon: '0172 5550001', letzter_besuch: new Date(Date.now() - 40 * DAY).toISOString(), einwilligung: 'ja' }], { 'X-API-Key': KEY });
+  await call('POST', '/api/v1/testbetrieb/reaktivierung/run', {}, { 'X-API-Key': KEY });
+  await call('POST', '/api/v1/testbetrieb/inbound/sms', { from: '0172 5550001', text: 'Nein danke, kein Interesse' }, { 'X-API-Key': KEY });
+  const c = db.one('SELECT * FROM contacts WHERE phone=?', '+491725550001');
+  assert.equal(JSON.parse(c.meta).reakt_stage, 3, 'Sequenz beendet');
+});
+
+test('Fix: Nach Terminbuchung kein erneutes "Wir vermissen Sie"', async () => {
+  await call('POST', '/api/v1/testbetrieb/import/customers', [{ name: 'Bucht Wieder', telefon: '0172 5550002', letzter_besuch: new Date(Date.now() - 40 * DAY).toISOString(), einwilligung: 'ja' }], { 'X-API-Key': KEY });
+  await call('POST', '/api/v1/testbetrieb/reaktivierung/run', {}, { 'X-API-Key': KEY });
+  const c = db.one('SELECT * FROM contacts WHERE phone=?', '+491725550002');
+  const slots = (await call('GET', '/api/public/testbetrieb/slots?days=7')).json.slots;
+  assert.equal((await call('POST', '/api/public/testbetrieb/book', { c: c.token, start: slots[slots.length - 1].start })).json.ok, true);
+  clearOutbox();
+  await call('POST', '/api/v1/testbetrieb/reaktivierung/run', {}, { 'X-API-Key': KEY });
+  assert.equal(sent({ tool: 'reaktivierung', to: '+491725550002' }).length, 0);
+});
+
+test('Fix: Häkchen im öffentlichen Formular ist keine Werbe-Einwilligung', async () => {
+  await call('POST', '/api/public/testbetrieb/lead', { name: 'Neu Formular', phone: '0172 5550003', consent: 'ja', message: 'Frage' });
+  assert.equal(db.one('SELECT marketing_consent FROM contacts WHERE phone=?', '+491725550003').marketing_consent, 0);
+});
+
+test('Fix: Angenommener Rückruf stoppt die Rückruf-Erinnerung', async () => {
+  await ev('missed-call', { phone: '0171 5550004' });
+  assert.ok(db.one("SELECT id FROM jobs WHERE tool='rueckruf' AND status='pending' AND contact_id=(SELECT id FROM contacts WHERE phone='+491715550004')"));
+  await call('POST', `/hooks/sipgate/testbetrieb?key=${KEY}`, { event: 'answer', direction: 'in', from: '0171 5550004' });
+  assert.equal(db.one("SELECT id FROM jobs WHERE tool='rueckruf' AND status='pending' AND contact_id=(SELECT id FROM contacts WHERE phone='+491715550004')"), undefined);
+});
+
+test('Fix: Gleichzeitige Buchungen desselben Slots -> nur eine gelingt', async () => {
+  const t = T();
+  const slots = await calendar.freeSlots(t, { days: 10, limit: 60 });
+  const s = slots[slots.length - 1].start;
+  const res = await Promise.all([1, 2, 3].map(() => calendar.book(t, { contactId: null, start: s, source: 'race' })));
+  assert.equal(res.filter((r) => r.ok).length, 1);
+});
+
+test('Fix: Outlook-Zeitzonen, Serientermine und kaputte Termine im iCal-Abgleich', () => {
+  const ics = ['BEGIN:VCALENDAR',
+    'BEGIN:VEVENT', 'DTSTART;TZID=W. Europe Standard Time:20261201T090000', 'DTEND;TZID=W. Europe Standard Time:20261201T100000', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;TZID="Europe/Berlin":20261202T090000', 'DTEND;TZID="Europe/Berlin":20261202T100000', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;TZID=Kaputt/Zone:2026XXXX', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART;TZID=Europe/Berlin:20261207T140000', 'DTEND;TZID=Europe/Berlin:20261207T150000', 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4', 'EXDATE;TZID=Europe/Berlin:20261209T140000', 'END:VEVENT',
+    'END:VCALENDAR'].join('\r\n');
+  const r = calendar.parseIcs(ics, 'Europe/Berlin', Date.parse('2027-06-01'));
+  const iso = r.map(([a]) => new Date(a).toISOString());
+  assert.ok(iso.includes('2026-12-01T08:00:00.000Z'), 'Outlook-Zone');
+  assert.ok(iso.includes('2026-12-02T08:00:00.000Z'), 'Zone in Anführungszeichen');
+  assert.deepEqual(iso.filter((x) => x >= '2026-12-07').sort(), ['2026-12-07T13:00:00.000Z', '2026-12-14T13:00:00.000Z', '2026-12-16T13:00:00.000Z'], 'Serie mit Ausnahme');
+});
+
+test('Fix: Zeitumstellung erzeugt keine doppelten Slots', async () => {
+  const t = config.register({ ...TENANT, id: 'dst', calendar: { ...TENANT.calendar, slotMinutes: 30, leadTimeHours: 0, horizonDays: 2, openingHours: { sun: [['01:00', '05:00']], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [] } } });
+  const slots = await calendar.freeSlots(t, { from: new Date('2027-03-28T00:00:00Z'), days: 1, limit: 50 });
+  assert.equal(new Set(slots.map((x) => x.start)).size, slots.length);
+  assert.ok(!slots.some((x) => /, 02:/.test(x.label)), '02:xx existiert am 28.03.2027 nicht');
+});
+
+test('Fix: Täglicher Rückhol-Lauf vervielfacht sich nicht bei Fehlern', async () => {
+  const t = config.register({ ...TENANT, id: 'scanfail', tools: { ...TENANT.tools, reaktivierung: { enabled: true } } });
+  const orig = db.all;
+  db.run("DELETE FROM jobs WHERE tenant='scanfail'");
+  scheduler.schedule(t, 'reaktivierung-scan', { runAt: Date.now() - 1000 });
+  const C = require('../src/tools/common');
+  const origReq = C.requireTool;
+  C.requireTool = () => { throw new Error('Testfehler'); };
+  try {
+    await scheduler.tick(config.tenant);
+    await advance(2 * DAY);
+  } finally { C.requireTool = origReq; }
+  assert.equal(db.all("SELECT id FROM jobs WHERE tenant='scanfail' AND tool='reaktivierung-scan' AND status='pending'").length, 1);
+  assert.ok(orig);
 });

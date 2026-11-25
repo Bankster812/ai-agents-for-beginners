@@ -18,6 +18,8 @@ async function bookAppointment(t, { contact: input, contactToken, start, reason,
   scheduler.cancelForContact(t.id, c.id, ['rueckruf', 'anfragen', 'angebote'], 'Termin gebucht');
   const m = C.meta(c);
   if (m.reakt_stage) C.setMeta(c, { reakt_stage: 0, reakt_won_at: new Date().toISOString() });
+  // Gebuchter Termin zählt als Besuch -> Rückhol-Nachrichten pausieren bis nach dem Termin
+  require('../lib/db').run('UPDATE contacts SET last_visit=? WHERE id=? AND (last_visit IS NULL OR last_visit<?)', res.appointment.start, c.id, res.appointment.start);
   const confirm = `Ihr Termin bei ${t.name} ist bestätigt: ${res.label}.${t.address ? ` Adresse: ${t.address}.` : ''} Falls etwas dazwischenkommt, antworten Sie einfach auf diese Nachricht.`;
   await channels.send(t, c, 'termin', { text: confirm, email: { subject: `Terminbestätigung: ${res.label}`, body: `Guten Tag${c.name ? ' ' + c.name : ''},\n\n${confirm}\n\n${t.signature || `Ihr Team von ${t.name}`}` } });
   await channels.notifyOwner(t, `Neuer Termin: ${res.label}`, `${C.contactLine(c)}\nAnliegen: ${reason || '-'}\nQuelle: ${source}`,

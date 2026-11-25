@@ -7,9 +7,11 @@ const outbox = []; // Konsolen-Kanal (Tests/Demo)
 // Telefonnummern auf E.164 normalisieren (Standard: Deutschland)
 function normalizePhone(raw, defaultCc = '49') {
   if (!raw) return '';
-  let s = String(raw).replace(/^whatsapp:/, '').replace(/[^\d+]/g, '');
+  let s = String(raw).replace(/^whatsapp:/, '').replace(/\(0\)/g, '').replace(/[^\d+]/g, '');
   if (!s) return '';
   if (s.startsWith('00')) s = '+' + s.slice(2);
+  else if (!s.startsWith('+') && s.startsWith(defaultCc) && s.length >= defaultCc.length + 10) s = '+' + s; // "49 170 …"
+  if (s.startsWith(`+${defaultCc}0`)) s = `+${defaultCc}` + s.slice(defaultCc.length + 2); // "+49 0170 …"
   else if (s.startsWith('0')) s = `+${defaultCc}` + s.slice(1);
   else if (!s.startsWith('+')) s = `+${defaultCc}` + s;
   return s.length >= 8 ? s : '';

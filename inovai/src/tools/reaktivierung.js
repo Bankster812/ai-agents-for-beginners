@@ -48,6 +48,7 @@ async function runScan(t) {
     if (stage >= cfg.days.length) continue;
     const inactive = daysSince(t, c.last_visit);
     if (inactive < cfg.days[stage]) continue;
+    if (c.status === 'termin' && db.one("SELECT id FROM appointments WHERE contact_id=? AND status!='storniert' AND start>?", c.id, db.now())) continue;
     // Abstand zwischen den Stufen einhalten (keine 3 Nachrichten auf einmal bei sehr alten Kunden)
     if (stage > 0 && m.reakt_last_at && daysSince(t, m.reakt_last_at) < cfg.days[stage] - cfg.days[stage - 1]) continue;
     if (cfg.requireConsent !== false && !c.marketing_consent) { skippedNoConsent++; continue; }
@@ -65,7 +66,11 @@ async function runScan(t) {
 
 // Täglicher Lauf (selbst-planend). Wird beim Start pro Mandant angelegt.
 async function scanJob(t) {
-  try { if (t.tools[TOOL].enabled) await runScan(t); } finally {
+  try { if (t.tools[TOOL].enabled) await runScan(t); } catch (e) {
+    db.logEvent(t.id, 'reactivation.scan_error', { error: e.message });
+  }
+  // genau EIN nächster Lauf (Fehler werden protokolliert, nicht wiederholt -> keine Vervielfachung)
+  if (!db.one("SELECT id FROM jobs WHERE tenant=? AND tool=? AND status='pending'", t.id, SCAN)) {
     scheduler.schedule(t, SCAN, { runAt: scheduler.after(t, 86400e3) });
   }
 }

@@ -7,28 +7,79 @@ const { parts, zoned, hm, ymd, DAY_KEYS, fmtDateTime } = require('./time');
 
 const busyCache = new Map(); // tenant -> { at, ranges }
 
-function parseIcsDate(v, tzidDefault) {
+// Windows-Zeitzonennamen (Outlook/Exchange) -> IANA
+const WIN_TZ = {
+  'W. Europe Standard Time': 'Europe/Berlin', 'Central Europe Standard Time': 'Europe/Budapest',
+  'Romance Standard Time': 'Europe/Paris', 'Central European Standard Time': 'Europe/Warsaw',
+  'GMT Standard Time': 'Europe/London', 'UTC': 'UTC', 'Coordinated Universal Time': 'UTC'
+};
+function validTz(tz, fallback) {
+  const z = WIN_TZ[String(tz || '').replace(/^"|"$/g, '')] || String(tz || '').replace(/^"|"$/g, '');
+  try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return z; } catch { return fallback; }
+}
+
+function parseIcsDate(v, tz) {
   // Formate: 20250101T090000Z | 20250101T090000 (lokal) | 20250101 (ganztägig)
   const m = v.match(/(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?/);
   if (!m) return null;
   const [, y, mo, d, h = '00', mi = '00', , z] = m;
   if (z) return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi));
-  return zoned(+y, +mo, +d, +h, +mi, tzidDefault);
+  return zoned(+y, +mo, +d, +h, +mi, tz);
 }
 
-function parseIcs(text, tz) {
+const WD = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+// Serientermine (RRULE: DAILY/WEEKLY/MONTHLY mit INTERVAL, COUNT, UNTIL, BYDAY) im Zeitraum bis "horizon" expandieren
+function expand(start, end, rrule, exdates, horizon, tz) {
+  const r = Object.fromEntries(rrule.split(';').map((x) => x.split('=')));
+  const dur = end - start;
+  const interval = Math.max(1, Number(r.INTERVAL) || 1);
+  const until = r.UNTIL ? parseIcsDate(r.UNTIL, tz).getTime() : Infinity;
+  const count = r.COUNT ? Number(r.COUNT) : Infinity;
+  const days = r.BYDAY ? r.BYDAY.split(',').map((d) => WD[d.slice(-2)]).filter((x) => x !== undefined) : null;
+  const out = [];
+  const p0 = parts(new Date(start), tz);
+  let n = 0;
+  for (let i = 0; i < 1500 && n < count; i++) {
+    let cand;
+    if (r.FREQ === 'DAILY') cand = [new Date(Date.UTC(p0.y, p0.m - 1, p0.d + i * interval))];
+    else if (r.FREQ === 'WEEKLY') {
+      const weekStart = Date.UTC(p0.y, p0.m - 1, p0.d - p0.weekday + i * 7 * interval);
+      cand = (days || [p0.weekday]).map((wd) => new Date(weekStart + wd * 86400e3));
+    } else if (r.FREQ === 'MONTHLY') cand = [new Date(Date.UTC(p0.y, p0.m - 1 + i * interval, p0.d))];
+    else return [[start, end]];
+    for (const c of cand.sort((a, b) => a - b)) {
+      const s0 = zoned(c.getUTCFullYear(), c.getUTCMonth() + 1, c.getUTCDate(), p0.h, p0.min, tz).getTime();
+      if (s0 < start) continue;
+      if (s0 > until || s0 > horizon || n >= count) return out;
+      n++;
+      if (!exdates.has(s0)) out.push([s0, s0 + dur]);
+    }
+  }
+  return out;
+}
+
+function parseIcs(text, tz, horizon = Date.now() + 120 * 86400e3) {
   const unfolded = text.replace(/\r?\n[ \t]/g, '');
   const ranges = [];
   for (const ev of unfolded.split('BEGIN:VEVENT').slice(1)) {
-    const body = ev.split('END:VEVENT')[0];
-    if (/^STATUS:CANCELLED/m.test(body) || /^TRANSP:TRANSPARENT/m.test(body)) continue;
-    const ds = body.match(/^DTSTART(?:;[^:]*?TZID=([^;:]+))?[^:]*:(.+)$/m);
-    const de = body.match(/^DTEND(?:;[^:]*?TZID=([^;:]+))?[^:]*:(.+)$/m);
-    if (!ds) continue;
-    const start = parseIcsDate(ds[2].trim(), ds[1] || tz);
-    let end = de ? parseIcsDate(de[2].trim(), de[1] || tz) : null;
-    if (!end && start) end = new Date(start.getTime() + (/T/.test(ds[2]) ? 3600e3 : 86400e3));
-    if (start && end) ranges.push([start.getTime(), end.getTime()]);
+    try { // ein fehlerhafter Termin darf nicht den ganzen Kalender unbrauchbar machen
+      const body = ev.split('END:VEVENT')[0];
+      if (/^STATUS:CANCELLED/m.test(body) || /^TRANSP:TRANSPARENT/m.test(body)) continue;
+      const ds = body.match(/^DTSTART(?:;[^:]*?TZID=("[^"]+"|[^;:]+))?[^:]*:(.+)$/m);
+      const de = body.match(/^DTEND(?:;[^:]*?TZID=("[^"]+"|[^;:]+))?[^:]*:(.+)$/m);
+      if (!ds) continue;
+      const zs = validTz(ds[1], tz);
+      const start = parseIcsDate(ds[2].trim(), zs);
+      let end = de ? parseIcsDate(de[2].trim(), validTz(de[1], tz)) : null;
+      if (!end && start) end = new Date(start.getTime() + (/T/.test(ds[2]) ? 3600e3 : 86400e3));
+      if (!start || !end) continue;
+      const rr = body.match(/^RRULE:(.+)$/m);
+      if (rr) {
+        const ex = new Set([...body.matchAll(/^EXDATE(?:;[^:]*?TZID=("[^"]+"|[^;:]+))?[^:]*:(.+)$/gm)]
+          .flatMap((m) => m[2].split(',').map((v) => (parseIcsDate(v.trim(), validTz(m[1], tz)) || new Date(0)).getTime())));
+        ranges.push(...expand(start.getTime(), end.getTime(), rr[1].trim(), ex, horizon, zs));
+      } else ranges.push([start.getTime(), end.getTime()]);
+    } catch { /* Termin übersprungen */ }
   }
   return ranges;
 }
@@ -74,6 +125,8 @@ async function freeSlots(t, { from = new Date(), days, limit = 40 } = {}) {
     for (const [a, b] of ranges) {
       for (let m = hm(a); m + cal.slotMinutes <= hm(b); m += cal.slotMinutes) {
         const s = zoned(p.y, p.m, p.d, Math.floor(m / 60), m % 60, tz).getTime();
+        const back = parts(new Date(s), tz);
+        if (back.h * 60 + back.min !== m) continue; // Uhrzeit existiert an diesem Tag nicht (Zeitumstellung)
         if (s < earliest || s < from.getTime()) continue;
         const e = s + slotMs;
         const overlapping = busy.filter(([bs, be]) => bs < e + bufMs && be > s - bufMs).length;
@@ -98,6 +151,10 @@ async function book(t, { contactId, start, reason = '', source = 'web' }) {
   if (!(await isFree(t, start))) return { ok: false, error: 'Dieser Termin ist leider nicht mehr frei.' };
   const s = new Date(start);
   const e = new Date(s.getTime() + t.calendar.slotMinutes * 60e3);
+  // Erneute Prüfung direkt vor dem Speichern – synchron, damit zwei gleichzeitige Buchungen nicht beide durchgehen
+  const buf = (t.calendar.bufferMinutes || 0) * 60e3;
+  const overlap = internalBusy(t, new Date(s.getTime() - buf), new Date(e.getTime() + buf)).length;
+  if (overlap >= (t.calendar.maxParallel || 1)) return { ok: false, error: 'Dieser Termin ist leider nicht mehr frei.' };
   const aid = db.id('apt_');
   db.run('INSERT INTO appointments (id, tenant, contact_id, start, end, reason, source, created_at) VALUES (?,?,?,?,?,?,?,?)',
     aid, t.id, contactId, s.toISOString(), e.toISOString(), String(reason).slice(0, 500), source, db.now());

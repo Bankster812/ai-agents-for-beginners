@@ -138,7 +138,7 @@ r.post('/api/public/:tenant/book', async (req, res, { params, body }) => {
   if (body.website) throw err(400, 'Spam erkannt'); // Honeypot
   const input = {};
   for (const k of ['name', 'phone', 'email']) if (body[k]) input[k] = String(body[k]).slice(0, 200);
-  if (body.consent) input.consent = 'ja';
+  // Häkchen auf der Buchungsseite = Einwilligung zur Kontaktaufnahme für DIESEN Termin, keine Werbe-Einwilligung
   const out = await bookAppointment(t, { contact: Object.keys(input).length ? input : null, contactToken: body.c, start: body.start, reason: String(body.reason || '').slice(0, 500), source: body.src ? `buchungsseite:${String(body.src).slice(0, 30)}` : 'buchungsseite' });
   send(res, out.ok ? 200 : 409, out.ok ? { ok: true, label: out.label } : out);
 });
@@ -244,6 +244,8 @@ r.post('/hooks/twilio/:tenant/voice', async (req, res, { params, body }) => {
   twilioCheck(req, t, body);
   const isDialAction = body.DialCallStatus !== undefined;
   const status = String(isDialAction ? body.DialCallStatus : body.CallStatus || '').toLowerCase();
+  if (['completed', 'answered', 'in-progress'].includes(status) && isDialAction) rueckruf.callAnswered(t, body.From || body.Caller);
+  if (status === 'completed' && !isDialAction && Number(body.CallDuration || 0) > 0) rueckruf.callAnswered(t, body.From || body.Caller);
   if (MISSED.includes(status)) {
     await rueckruf.missedCall(t, { phone: body.From || body.Caller });
     // Anrufer ist bei einer Dial-Action noch in der Leitung (außer er hat selbst aufgelegt)
@@ -268,6 +270,8 @@ r.post('/hooks/sipgate/:tenant', async (req, res, { params, body, query }) => {
   requireApiKey(req, t, query);
   if (body.event === 'hangup' && body.direction !== 'out' && ['cancel', 'noAnswer', 'busy', 'notFound', 'congestion'].includes(body.cause)) {
     await rueckruf.missedCall(t, { phone: body.from });
+  } else if (body.event === 'answer' || (body.event === 'hangup' && body.cause === 'normalClearing')) {
+    rueckruf.callAnswered(t, body.direction === 'out' ? body.to : body.from);
   }
   send(res, 200, '<?xml version="1.0" encoding="UTF-8"?><Response/>', { 'Content-Type': 'application/xml' });
 });
@@ -277,6 +281,8 @@ r.post('/hooks/placetel/:tenant', async (req, res, { params, body, query }) => {
   requireApiKey(req, t, query);
   if (/hungup/i.test(body.event || '') && ['missed', 'voicemail', 'busy', 'unavailable', 'canceled'].includes(String(body.type || '').toLowerCase())) {
     await rueckruf.missedCall(t, { phone: body.from });
+  } else if (/hungup|callaccepted/i.test(body.event || '') && String(body.type || '').toLowerCase() === 'accepted') {
+    rueckruf.callAnswered(t, body.direction === 'out' ? body.to : body.from);
   }
   send(res, 200, { ok: true });
 });

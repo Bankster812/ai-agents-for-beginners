@@ -67,6 +67,7 @@ function upsert(tenant, input, source, { untrusted = false } = {}) {
   if (!f.phone && !f.email) return null;
   const existing = find(tenant, f);
   const now = db.now();
+  if (untrusted) f.consent = ''; // Werbe-Einwilligung nur über vertrauenswürdige Quellen (API/Import/Dashboard)
   if (existing && untrusted) {
     db.run(`UPDATE contacts SET name=COALESCE(NULLIF(name, ''), NULLIF(?, '')), phone=COALESCE(NULLIF(phone, ''), NULLIF(?, '')),
       email=COALESCE(NULLIF(email, ''), NULLIF(?, '')), updated_at=? WHERE id=?`, f.name, f.phone, f.email, now, existing.id);

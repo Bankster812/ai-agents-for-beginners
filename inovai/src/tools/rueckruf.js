@@ -38,5 +38,12 @@ async function run(t, job) {
   await C.composeAndSend(t, c, TOOL, job.step, { link: C.bookingLink(t, c, TOOL, job.sequence_key) }, { anlass: 'verpasster Anruf' });
 }
 
+// Anruf wurde doch angenommen (oder Rückruf erfolgt) -> ausstehende Rückruf-Erinnerung stoppen
+function callAnswered(t, phone) {
+  const c = contacts.find(t.id, { phone: channels.normalizePhone(phone) });
+  if (!c) return 0;
+  return scheduler.cancelForContact(t.id, c.id, [TOOL], 'Anruf angenommen');
+}
+
 scheduler.register(TOOL, run);
-module.exports = { missedCall, TOOL };
+module.exports = { missedCall, callAnswered, TOOL };

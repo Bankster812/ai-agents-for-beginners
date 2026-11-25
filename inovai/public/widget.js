@@ -16,7 +16,7 @@
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var TTS = 'speechSynthesis' in window;
 
-  var cfg = null, root, els = {}, busy = false, voiceMode = false, rec = null, listening = false, speaking = false;
+  var cfg = null, root, els = {}, busy = false, voiceMode = false, rec = null, listening = false, speaking = false, speakGen = 0, emptyListens = 0;
   var sessionId = localStorage.getItem(KEY + '_sid') || '';
   var log = [];
   try { log = JSON.parse(sessionStorage.getItem(KEY + '_log') || '[]'); } catch (e) { log = []; }
@@ -176,13 +176,18 @@
     api('/chat', { method: 'POST', body: { sessionId: sessionId, message: text, voice: !!(fromVoice || voiceMode), page: location.pathname } })
       .then(function (res) {
         typing(false); busy = false;
-        if (res.error) { addMsg('bot', 'Entschuldigung, gerade gibt es ein technisches Problem. ' + (cfg.phone ? 'Sie erreichen uns telefonisch unter ' + cfg.phone + '.' : '')); return; }
+        if (res.error) {
+          var em = res.error && /Zu viele|ausgelastet/.test(res.error) ? res.error : 'Entschuldigung, gerade gibt es ein technisches Problem. ' + (cfg.phone ? 'Sie erreichen uns telefonisch unter ' + cfg.phone + '.' : '');
+          addMsg('bot', em);
+          if (fromVoice || voiceMode) speak(em);
+          return;
+        }
         if (res.sessionId) { sessionId = res.sessionId; localStorage.setItem(KEY + '_sid', sessionId); }
         addMsg('bot', res.reply);
         if (res.ui) { log.push({ k: 'ui', ui: res.ui }); save(); renderUi(res.ui); }
         if (fromVoice || voiceMode) speak(res.speech || res.reply);
       })
-      .catch(function () { typing(false); busy = false; addMsg('bot', 'Verbindung fehlgeschlagen. Bitte versuchen Sie es erneut.'); });
+      .catch(function () { typing(false); busy = false; addMsg('bot', 'Verbindung fehlgeschlagen. Bitte versuchen Sie es erneut.'); if (fromVoice || voiceMode) speak('Die Verbindung ist fehlgeschlagen. Bitte versuchen Sie es noch einmal.'); });
   }
 
   // ---------- Interaktive Elemente: Termine, Formulare ----------
@@ -267,20 +272,25 @@
   function speak(text) {
     if (!TTS || !text) { if (voiceMode) startListening(true); return; }
     stopSpeaking();
+    var gen = ++speakGen; // nur die neueste Ausgabe darf danach das Mikrofon öffnen
     var parts = String(text).match(/[^.!?]+[.!?]*/g) || [text];
     speaking = true;
     parts.forEach(function (p, i) {
       var u = new SpeechSynthesisUtterance(p.trim());
       u.lang = (cfg.locale || 'de-DE'); u.rate = 1.03;
       var v = germanVoice(); if (v) u.voice = v;
-      if (i === parts.length - 1) u.onend = u.onerror = function () { speaking = false; if (voiceMode) setTimeout(function () { startListening(true); }, 250); };
+      if (i === parts.length - 1) u.onend = u.onerror = function () {
+        if (gen !== speakGen) return;
+        speaking = false;
+        if (voiceMode) setTimeout(function () { if (gen === speakGen && !speaking) startListening(true); }, 250);
+      };
       speechSynthesis.speak(u);
     });
   }
-  function stopSpeaking() { if (TTS) speechSynthesis.cancel(); speaking = false; }
+  function stopSpeaking() { speakGen++; if (TTS) speechSynthesis.cancel(); speaking = false; }
 
   function startListening(auto) {
-    if (!SR || listening) return;
+    if (!SR || listening || speaking) return;
     rec = new SR();
     rec.lang = cfg.locale || 'de-DE';
     rec.interimResults = true;
@@ -296,16 +306,27 @@
       els.input.value = (finalText + ' ' + interim).trim();
       if (interimEl) interimEl.remove();
     };
+    var fatal = false;
     rec.onerror = function (e) {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { sys('Mikrofon-Zugriff wurde verweigert. Sie können die Berechtigung in den Browser-Einstellungen erteilen.'); endVoiceMode(); }
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      fatal = true;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') sys('Mikrofon-Zugriff wurde verweigert. Sie können die Berechtigung in den Browser-Einstellungen erteilen.');
+      else if (e.error === 'audio-capture') sys('Kein Mikrofon gefunden. Bitte schreiben Sie Ihre Frage.');
+      else sys('Die Spracherkennung ist gerade nicht verfügbar (' + e.error + '). Bitte schreiben Sie Ihre Frage.');
+      endVoiceMode();
     };
     rec.onend = function () {
       listening = false;
       if (els.mic) els.mic.classList.remove('rec');
       els.input.placeholder = 'Nachricht schreiben …';
       var text = (finalText || els.input.value).trim();
-      if (text) submit(text, true);
-      else if (voiceMode && auto) setTimeout(function () { if (voiceMode && !busy && !speaking) startListening(true); }, 400);
+      if (fatal) return;
+      if (text) { emptyListens = 0; submit(text, true); }
+      else if (voiceMode && auto) {
+        // nach 3 Runden Stille den Sprachmodus beenden statt endlos weiterzuhören
+        if (++emptyListens >= 3) { emptyListens = 0; sys('Sprachmodus pausiert – tippen Sie auf „Voice“, um weiterzusprechen.'); endVoiceMode(); return; }
+        setTimeout(function () { if (voiceMode && !busy && !speaking) startListening(true); }, 400);
+      }
     };
     try { rec.start(); } catch (e) { listening = false; }
   }

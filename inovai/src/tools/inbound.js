@@ -7,7 +7,7 @@ const channels = require('../lib/channels');
 const llm = require('../lib/llm');
 const C = require('./common');
 
-const STOP_RE = /^\s*(stop|stopp|abmelden|abbestellen|unsubscribe|keine nachrichten|austragen)\b/i;
+const STOP_RE = /\b(stop|stopp|abmelden|abbestellen|unsubscribe|austragen|abmeldung)\b|keine (weiteren |sms |nachrichten )*(nachrichten|sms|werbung) mehr|nicht mehr (anschreiben|kontaktieren)/i;
 const NURTURE = ['rueckruf', 'anfragen', 'angebote', 'reaktivierung', 'bewertung'];
 
 function conversation(t, contactId, channel) {
@@ -46,6 +46,8 @@ async function handle(t, { channel, from, body }) {
   // Kunde hat reagiert -> keine weiteren automatischen Erinnerungen (außer Bewertung)
   const stopped = scheduler.cancelForContact(t.id, c.id, ['rueckruf', 'anfragen', 'angebote'], 'Kunde hat geantwortet');
   if (['neu', 'lead'].includes(c.status)) contacts.setStatus(c.id, 'geantwortet');
+  // Kunde hat reagiert -> Rückhol-Sequenz beenden (Inhaber übernimmt persönlich)
+  if (C.meta(c).reakt_stage) C.setMeta(c, { reakt_stage: (t.tools.reaktivierung.days || []).length, reakt_replied_at: db.now() });
 
   const conv = conversation(t, c.id, channel);
   const history = JSON.parse(conv.history || '[]');

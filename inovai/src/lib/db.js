@@ -128,6 +128,9 @@ function init(file) {
   db = new DatabaseSync(target);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  // Migrationen für bestehende Installationen
+  const cols = db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name);
+  if (!cols.includes('claimed_at')) db.exec('ALTER TABLE jobs ADD COLUMN claimed_at TEXT');
   return db;
 }
 

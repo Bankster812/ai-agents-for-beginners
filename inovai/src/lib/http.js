@@ -95,6 +95,7 @@ function rateLimit(key, limit, windowMs) {
 function evict(now) {
   for (const [k, b] of buckets) if (now - b.start > b.windowMs) buckets.delete(k);
 }
+rateLimit._reset = () => buckets.clear(); // nur für Tests
 rateLimit.peek = (key, windowMs) => {
   const b = buckets.get(key);
   return b && Date.now() - b.start <= windowMs ? b.n : 0;

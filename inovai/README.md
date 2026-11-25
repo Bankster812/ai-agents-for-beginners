@@ -111,7 +111,7 @@ Ausgehend: `notify.webhookUrl` erhält jedes Ereignis (neuer Lead, Termin gebuch
 
 - Twilio-Webhooks nur mit gültiger Signatur (ohne `authToken` abgelehnt), API-Key-Pflicht für alle Integrationen, Admin nur per Bearer-Token mit Sperre nach 10 Fehlversuchen/Minute.
 - Rate-Limits pro Besucher **und** pro Kunde (Schutz vor KI- und SMS-Kosten-Missbrauch); SMS nur an DACH-Nummern (`channels.allowedPrefixes`).
-- Öffentliche Formulare/Chat können bestehende Kontakte nicht überschreiben (keine gefälschten Einwilligungen); der Chatbot nutzt nur Kontaktdaten, die der Besucher selbst genannt hat.
+- Öffentliche Formulare/Chat können bestehende Kontakte nicht überschreiben; das Häkchen dort gilt nur als Einwilligung zur Bearbeitung, nicht als Werbe-Einwilligung (die kommt nur über API/Import/Dashboard); der Chatbot nutzt nur Kontaktdaten, die der Besucher selbst genannt hat.
 - Website-Crawler und Kalender-Abgleich blockieren interne Adressen (SSRF-Schutz), Größen- und Seitenlimits.
 - Hinter einem Reverse-Proxy `INOVAI_TRUST_PROXY=1` setzen, damit die echte Besucher-IP erkannt wird.
 - In Produktion (`NODE_ENV=production`, Standard im Docker-Image) werden Mandanten mit Platzhalter-/kurzen Zugangsdaten **nicht geladen** – auch die Demo nicht.
@@ -119,7 +119,7 @@ Ausgehend: `notify.webhookUrl` erhält jedes Ereignis (neuer Lead, Termin gebuch
 ## Tests
 
 ```bash
-npm test                 # 31 End-to-End-Tests über die echte HTTP-API (alle 5 Produkte, Chatbot, Sicherheit, DSGVO)
+npm test                 # 40 End-to-End-Tests über die echte HTTP-API (alle 5 Produkte, Chatbot, Sicherheit, DSGVO)
 npm run e2e              # Browser-Test (Playwright): Widget Text + Voice, Buchung, Buchungsseite, Dashboard
                          # einmalig: npm i -D playwright && npx playwright install chromium
 ```

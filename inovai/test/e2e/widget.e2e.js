@@ -19,7 +19,8 @@ const FAKE_VOICE = `
   window.__say = null;
   class FakeRec {
     constructor(){ this.lang='de-DE'; }
-    start(){ window.__rec = this; setTimeout(()=>this.onstart && this.onstart(), 10);
+    start(){ window.__starts = (window.__starts||0)+1; window.__rec = this; setTimeout(()=>this.onstart && this.onstart(), 10);
+      if (window.__failNext) { const err = window.__failNext; window.__failNext = null; setTimeout(()=>{ this.onerror && this.onerror({error: err}); this.onend && this.onend(); }, 30); return; }
       window.__say = (txt) => { const r=[{transcript:txt}]; r.isFinal=true; const res=[r];
         this.onresult && this.onresult({resultIndex:0, results:res}); setTimeout(()=>this.onend && this.onend(), 10); window.__say=null; }; }
     stop(){ setTimeout(()=>this.onend && this.onend(), 5); }
@@ -95,6 +96,15 @@ async function main() {
       await page.waitForFunction(() => typeof window.__say === 'function', null, { timeout: 5000 });
       await page.screenshot({ path: path.join(SHOTS, '2-voice-modus.png') });
       await page.locator('#inovai-widget .vstop').click();
+    });
+
+    await step('Voice-Fehler (Netzwerk): Sprachmodus endet mit Hinweis statt Endlosschleife', async () => {
+      await page.evaluate(() => { window.__failNext = 'network'; window.__starts = 0; });
+      await page.locator('#inovai-widget .ib.voice').click();
+      await page.locator('#inovai-widget .m.sys', { hasText: 'Spracherkennung ist gerade nicht verfügbar' }).waitFor();
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal(await page.evaluate(() => window.__starts), 1, 'kein automatischer Neustart');
+      assert.equal(await page.locator('#inovai-widget .vbar.show').count(), 0, 'Sprachmodus beendet');
     });
 
     await step('Mobile-Ansicht: Widget im Vollbild', async () => {

@@ -47,7 +47,7 @@ async function tick(getTenant) {
     const due = db.all("SELECT * FROM jobs WHERE status='pending' AND run_at<=? ORDER BY run_at LIMIT 100", db.now());
     for (const job of due) {
       // Doppelte Ausführung verhindern (mehrere Instanzen)
-      const claim = db.run("UPDATE jobs SET status='running', attempts=attempts+1 WHERE id=? AND status='pending'", job.id);
+      const claim = db.run("UPDATE jobs SET status='running', attempts=attempts+1, claimed_at=? WHERE id=? AND status='pending'", db.now(), job.id);
       if (!Number(claim.changes)) continue;
       const t = getTenant(job.tenant);
       const fn = handlers.get(job.tool);
@@ -71,7 +71,8 @@ async function tick(getTenant) {
 
 function start(getTenant, intervalMs = 5000) {
   if (timer) return;
-  db.run("UPDATE jobs SET status='pending' WHERE status='running'"); // nach Absturz wieder aufnehmen
+  // nach Absturz wieder aufnehmen – nur Jobs, die seit >10 min hängen (laufende anderer Instanzen bleiben unberührt)
+  db.run("UPDATE jobs SET status='pending' WHERE status='running' AND (claimed_at IS NULL OR claimed_at<?)", new Date(Date.now() - 10 * 60e3).toISOString());
   timer = setInterval(() => tick(getTenant).catch(() => {}), intervalMs);
   timer.unref();
 }
