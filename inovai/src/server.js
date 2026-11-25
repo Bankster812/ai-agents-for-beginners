@@ -36,21 +36,42 @@ function html(res, file, replacements = {}) {
 }
 const escHtml = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function err(status, message) { return Object.assign(new Error(message), { status }); }
-function ip(req) { return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?'; }
+// Client-IP: X-Forwarded-For nur hinter eigenem Reverse-Proxy auswerten (INOVAI_TRUST_PROXY=1),
+// dann den vom Proxy angehängten (letzten) Eintrag – nie den vom Client fälschbaren ersten.
+function ip(req) {
+  if (process.env.INOVAI_TRUST_PROXY === '1' && req.headers['x-forwarded-for']) {
+    const parts = String(req.headers['x-forwarded-for']).split(',').map((x) => x.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
+  return req.socket.remoteAddress || '?';
+}
 
 function tenantOr404(id) {
   const t = config.tenant(id);
   if (!t) throw err(404, 'Mandant nicht gefunden');
   return t;
 }
-function requireApiKey(req, t, query) {
-  const key = req.headers['x-api-key'] || query.get('key') || (req.headers.authorization || '').replace(/^Bearer /, '');
-  if (!safeEqual(key, t.apiKey)) throw err(401, 'API-Key fehlt oder ist falsch (Header X-API-Key oder ?key=)');
+// Schutz gegen Durchprobieren: max. 10 Fehlversuche pro IP und Minute
+function authFailed(req, message) {
+  if (!rateLimit(`authfail:${ip(req)}`, 10, 60e3)) throw err(429, 'Zu viele Fehlversuche – bitte später erneut versuchen.');
+  throw err(401, message);
 }
-function requireAdmin(req, t, query) {
-  const tok = (req.headers.authorization || '').replace(/^Bearer /, '') || query.get('token');
+function authBlocked(req) {
+  const b = rateLimit.peek(`authfail:${ip(req)}`, 60e3);
+  if (b >= 10) throw err(429, 'Zu viele Fehlversuche – bitte später erneut versuchen.');
+}
+// ?key= nur, weil manche Telefonanlagen (sipgate, Placetel) keine eigenen Header senden können
+function requireApiKey(req, t, query) {
+  authBlocked(req);
+  if (!rateLimit(`api:${t.id}`, Number(process.env.INOVAI_API_RATE || 600), 60e3)) throw err(429, 'API-Limit erreicht');
+  const key = req.headers['x-api-key'] || (req.headers.authorization || '').replace(/^Bearer /, '') || query.get('key');
+  if (!safeEqual(key, t.apiKey)) authFailed(req, 'API-Key fehlt oder ist falsch (Header X-API-Key)');
+}
+function requireAdmin(req, t) {
+  authBlocked(req);
+  const tok = (req.headers.authorization || '').replace(/^Bearer /, '');
   if (safeEqual(tok, process.env.INOVAI_ADMIN_TOKEN) || (t && safeEqual(tok, t.adminToken))) return;
-  throw err(401, 'Nicht angemeldet');
+  authFailed(req, 'Nicht angemeldet');
 }
 
 // ---------- Seiten & Assets ----------
@@ -86,8 +107,12 @@ r.get('/cal/:tenant/:file', (req, res, { params }) => {
 });
 
 // ---------- Öffentliche API (Widget, Buchungsseite, Formulare) ----------
+// Limits pro Besucher-IP UND pro Kunde gesamt (Schutz vor Kosten-Missbrauch bei KI und SMS)
+const TENANT_CAPS = { chat: 1500, slots: 3000, book: 100, lead: 100 }; // pro Stunde
 function publicGuard(req, t, bucket, limit = 30) {
   if (!rateLimit(`${bucket}:${t.id}:${ip(req)}`, limit, 60e3)) throw err(429, 'Zu viele Anfragen – bitte kurz warten.');
+  const cap = (t.limits && t.limits[bucket]) || TENANT_CAPS[bucket] || 1000;
+  if (!rateLimit(`${bucket}:${t.id}:global`, cap, 3600e3)) throw err(429, 'Der Dienst ist gerade stark ausgelastet – bitte später erneut versuchen.');
 }
 r.get('/api/public/:tenant/config', (req, res, { params }) => send(res, 200, agent.widgetConfig(tenantOr404(params.tenant))));
 r.post('/api/public/:tenant/chat', async (req, res, { params, body }) => {
@@ -122,12 +147,22 @@ r.post('/api/public/:tenant/lead', async (req, res, { params, body }) => {
   const t = tenantOr404(params.tenant);
   publicGuard(req, t, 'lead', 5);
   if (body.website || body._gotcha) throw err(400, 'Spam erkannt');
-  const out = t.tools.anfragen.enabled ? await anfragen.newLead(t, { ...body, source: body.source || 'website-formular' })
-    : (contactsLib.upsert(t.id, body, 'website-formular') ? { ok: true } : { ok: false, error: 'Telefon oder E-Mail fehlt' });
-  const redirect = body._redirect && /^https?:\/\//.test(body._redirect) ? body._redirect : null;
+  const out = t.tools.anfragen.enabled ? await anfragen.newLead(t, { ...body, source: 'website-formular' }, { untrusted: true })
+    : (contactsLib.upsert(t.id, body, 'website-formular', { untrusted: true }) ? { ok: true } : { ok: false, error: 'Telefon oder E-Mail fehlt' });
+  const redirect = safeRedirect(t, body._redirect);
   if (redirect && out.ok) return send(res, 303, '', { Location: redirect });
   send(res, out.ok ? 200 : 400, out);
 });
+
+// Weiterleitung nach dem Formular nur auf die eigene Website des Kunden (kein Open Redirect)
+function safeRedirect(t, target) {
+  if (!target) return null;
+  try {
+    const u = new URL(target);
+    const allowed = [t.website, ...(t.allowedRedirects || [])].filter(Boolean).map((w) => new URL(w).hostname.replace(/^www\./, ''));
+    return /^https?:$/.test(u.protocol) && allowed.includes(u.hostname.replace(/^www\./, '')) ? u.toString() : null;
+  } catch { return null; }
+}
 
 // ---------- Integrations-API (API-Key) ----------
 const EVENTS = {
@@ -170,10 +205,17 @@ r.post('/api/v1/:tenant/inbound/:channel', async (req, res, { params, body, quer
 });
 
 // ---------- Telefonanlagen & Provider ----------
+// Twilio-Webhooks nur mit gültiger Signatur. Ohne authToken werden sie abgelehnt (fail closed);
+// Ausnahme: reiner Test-/Demo-Betrieb mit Konsolen-Kanal.
 function twilioCheck(req, t, body, kind) {
-  const c = (kind === 'whatsapp' ? t.channels.whatsapp : t.channels.sms) || t.channels.sms || {};
+  const c = (t.twilio && t.twilio.authToken ? t.twilio : null) || ((kind === 'whatsapp' ? t.channels.whatsapp : t.channels.sms) || {});
+  if (!rateLimit(`twilio:${t.id}:${ip(req)}`, 120, 60e3)) throw err(429, 'Zu viele Anfragen');
+  if (!c.authToken) {
+    if ((t.channels.sms || {}).provider === 'console') return;
+    throw err(403, 'Twilio-Webhook nicht eingerichtet (authToken fehlt)');
+  }
   const url = `${config.baseUrl()}${req.url}`;
-  if (c.authToken && c.validateSignature !== false && !twilioValid(c.authToken, url, body, req.headers['x-twilio-signature'])) throw err(403, 'Ungültige Twilio-Signatur');
+  if (!twilioValid(c.authToken, url, body, req.headers['x-twilio-signature'])) throw err(403, 'Ungültige Twilio-Signatur');
 }
 const TWIML_EMPTY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 const xml = (s) => `<?xml version="1.0" encoding="UTF-8"?><Response>${s}</Response>`;
@@ -338,8 +380,8 @@ r.get('/api/admin/:tenant/setup', (req, res, { params, query }) => {
     importCustomers: `${b}/api/v1/${t.id}/import/customers`,
     inboundEmail: `${b}/api/v1/${t.id}/inbound/email`,
     twilio: { voiceUrl: `${b}/hooks/twilio/${t.id}/incoming`, voiceStatusCallback: `${b}/hooks/twilio/${t.id}/voice`, messaging: `${b}/hooks/twilio/${t.id}/sms` },
-    sipgate: `${b}/hooks/sipgate/${t.id}?key=API_KEY`,
-    placetel: `${b}/hooks/placetel/${t.id}?key=API_KEY`,
+    sipgate: `${b}/hooks/sipgate/${t.id}?key=API_KEY  (sipgate kann keine eigenen Header senden – URL geheim halten)`,
+    placetel: `${b}/hooks/placetel/${t.id}?key=API_KEY  (URL geheim halten)`,
     icsFeed: t.calendar.icsToken ? `${b}/cal/${t.id}/${t.calendar.icsToken}.ics` : '(calendar.icsToken setzen)',
     apiKeyHeader: 'X-API-Key: <apiKey aus der Mandanten-Konfiguration>'
   });
@@ -358,12 +400,17 @@ function createServer() {
   return http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (config.baseUrl().startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    if (/^\/(admin|book\/)/.test(req.url)) {
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    }
     cors(req, res);
     if (req.method === 'OPTIONS') return send(res, 204, '');
-    const url = new URL(req.url, 'http://x');
-    const m = r.match(req.method, url.pathname);
-    if (!m) return send(res, 404, { error: 'Nicht gefunden' });
     try {
+      const url = new URL(req.url, 'http://x');
+      const m = r.match(req.method, url.pathname);
+      if (!m) return send(res, 404, { error: 'Nicht gefunden' });
       const { body } = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req) : { body: {} };
       await m.handler(req, res, { params: m.params, query: url.searchParams, body });
     } catch (e) {
@@ -384,6 +431,8 @@ function boot({ dbFile, startScheduler = true } = {}) {
 }
 
 if (require.main === module) {
+  process.on('unhandledRejection', (e) => console.error('Unbehandelter Fehler:', e));
+  process.on('uncaughtException', (e) => console.error('Unbehandelte Ausnahme:', e));
   boot();
   const port = Number(process.env.PORT || 3000);
   createServer().listen(port, () => {

@@ -9,10 +9,10 @@ const C = require('./common');
 
 const TOOL = 'anfragen';
 
-async function newLead(t, input) {
+async function newLead(t, input, { untrusted = false } = {}) {
   C.requireTool(t, TOOL);
   const cfg = t.tools[TOOL];
-  const c = contacts.upsert(t.id, input, contacts.pick(input, ['source', 'quelle', 'kanal', 'utm_source']) || 'anfrage');
+  const c = contacts.upsert(t.id, input, contacts.pick(input, ['source', 'quelle', 'kanal', 'utm_source']) || 'anfrage', { untrusted });
   if (!c) return { ok: false, error: 'Telefon oder E-Mail fehlt' };
   const message = contacts.pick(input, ['message', 'nachricht', 'anliegen', 'text', 'comment', 'kommentar', 'beschreibung']);
   const service = contacts.pick(input, ['service', 'leistung', 'interesse', 'interest', 'thema', 'subject', 'betreff']);
@@ -35,7 +35,7 @@ async function run(t, job) {
   const c = contacts.byId(job.contact_id);
   if (!c || c.opted_out || ['kunde', 'verloren', 'termin'].includes(c.status)) return;
   await C.composeAndSend(t, c, TOOL, job.step, { link: C.bookingLink(t, c, TOOL, job.sequence_key), leistung: job.payload.service || '' },
-    { anlass: 'neue Kundenanfrage', leistung: job.payload.service, anliegen: job.payload.message });
+    { anlass: 'neue Kundenanfrage', leistung: String(job.payload.service || '').slice(0, 60) }); // Freitext des Absenders bewusst NICHT an die KI (Prompt-Injection)
 }
 
 scheduler.register(TOOL, run);

@@ -2,6 +2,7 @@
 // Eingebauter Terminkalender: Öffnungszeiten, Puffer, Vorlaufzeit, Parallel-Termine,
 // Abgleich mit externem Kalender (Google/Outlook/Apple über iCal-URL) und ICS-Feed zum Abonnieren.
 const db = require('./db');
+const { safeFetch } = require('./net');
 const { parts, zoned, hm, ymd, DAY_KEYS, fmtDateTime } = require('./time');
 
 const busyCache = new Map(); // tenant -> { at, ranges }
@@ -38,8 +39,8 @@ async function externalBusy(t) {
   const c = busyCache.get(t.id);
   if (c && Date.now() - c.at < 5 * 60e3) return c.ranges;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const ranges = parseIcs(await res.text(), t.timezone);
+    const r = await safeFetch(url, { timeoutMs: 8000, maxBytes: 5 * 1024 * 1024 });
+    const ranges = parseIcs(r.text, t.timezone);
     busyCache.set(t.id, { at: Date.now(), ranges });
     return ranges;
   } catch {

@@ -91,9 +91,18 @@ function loadAll() {
     if (!f.endsWith('.json')) continue;
     const raw = JSON.parse(fs.readFileSync(path.join(TENANT_DIR, f), 'utf8'));
     const t = normalize(raw);
+    if (process.env.NODE_ENV === 'production' && insecure(t)) {
+      console.warn(`WARNUNG: Mandant "${t.id}" wird NICHT geladen – apiKey/adminToken fehlen, sind zu kurz oder Platzhalter. Bitte sichere Werte setzen.`);
+      continue;
+    }
     cache.set(t.id, t);
   }
   return cache;
+}
+
+function insecure(t) {
+  const bad = (v) => !v || String(v).length < 20 || /aendern|change|demo|test|example/i.test(String(v));
+  return bad(t.apiKey) || bad(t.adminToken) || (t.calendar.icsToken && bad(t.calendar.icsToken));
 }
 
 function register(raw) { const t = normalize(raw); cache.set(t.id, t); return t; }
@@ -101,4 +110,4 @@ function tenant(id) { if (!cache.size) loadAll(); return cache.get(id) || null; 
 function tenants() { if (!cache.size) loadAll(); return [...cache.values()]; }
 function baseUrl() { return (process.env.INOVAI_BASE_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, ''); }
 
-module.exports = { loadAll, register, tenant, tenants, baseUrl, deepMerge, DEFAULTS, TENANT_DIR };
+module.exports = { insecure, loadAll, register, tenant, tenants, baseUrl, deepMerge, DEFAULTS, TENANT_DIR };

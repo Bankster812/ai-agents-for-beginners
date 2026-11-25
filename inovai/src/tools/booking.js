@@ -6,10 +6,10 @@ const channels = require('../lib/channels');
 const calendar = require('../lib/calendar');
 const C = require('./common');
 
-async function bookAppointment(t, { contact: input, contactToken, start, reason, source }) {
+async function bookAppointment(t, { contact: input, contactToken, start, reason, source, untrusted = true }) {
   let c = contactToken ? contacts.byToken(contactToken) : null;
   if (c && c.tenant !== t.id) c = null;
-  if (input) c = contacts.upsert(t.id, { ...(c ? { phone: c.phone, email: c.email } : {}), ...input }, source) || c;
+  if (input) c = contacts.upsert(t.id, { ...(c ? { phone: c.phone, email: c.email } : {}), ...input }, source, { untrusted }) || c;
   if (!c) return { ok: false, error: 'Bitte Telefonnummer oder E-Mail angeben.' };
   const res = await calendar.book(t, { contactId: c.id, start, reason, source });
   if (!res.ok) return res;

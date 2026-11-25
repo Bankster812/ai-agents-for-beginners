@@ -17,7 +17,13 @@ class Router {
     for (const r of this.routes) {
       if (r.method !== method) continue;
       const m = path.match(r.re);
-      if (m) return { handler: r.handler, params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])])) };
+      if (m) {
+        const params = {};
+        for (let i = 0; i < r.keys.length; i++) {
+          try { params[r.keys[i]] = decodeURIComponent(m[i + 1]); } catch { return null; } // kaputte %-Kodierung -> 404
+        }
+        return { handler: r.handler, params };
+      }
     }
     return null;
   }
@@ -80,11 +86,20 @@ const buckets = new Map();
 function rateLimit(key, limit, windowMs) {
   const now = Date.now();
   let b = buckets.get(key);
-  if (!b || now - b.start > windowMs) { b = { start: now, n: 0 }; buckets.set(key, b); }
+  if (!b || now - b.start > windowMs) { b = { start: now, n: 0, windowMs }; buckets.set(key, b); }
   b.n++;
-  if (buckets.size > 50000) buckets.clear();
+  if (buckets.size > 50000) evict(now);
   return b.n <= limit;
 }
+// Nur abgelaufene Einträge entfernen (nie alle Limits auf einmal zurücksetzen)
+function evict(now) {
+  for (const [k, b] of buckets) if (now - b.start > b.windowMs) buckets.delete(k);
+}
+rateLimit.peek = (key, windowMs) => {
+  const b = buckets.get(key);
+  return b && Date.now() - b.start <= windowMs ? b.n : 0;
+};
+setInterval(() => evict(Date.now()), 60e3).unref();
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
@@ -93,7 +108,7 @@ function safeEqual(a, b) {
 
 // Twilio-Signaturprüfung (X-Twilio-Signature)
 function twilioValid(authToken, url, params, signature) {
-  if (!authToken) return true;
+  if (!authToken) return false;
   const data = url + Object.keys(params).sort().map((k) => k + params[k]).join('');
   const expected = crypto.createHmac('sha1', authToken).update(Buffer.from(data, 'utf8')).digest('base64');
   return safeEqual(expected, signature);

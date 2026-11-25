@@ -107,11 +107,14 @@ const TOOLS = [
   }
 ];
 
+// Gesprächs-IDs vergibt nur der Server (zufällig, nicht erratbar). Unbekannte IDs -> neues Gespräch.
 function session(t, sessionId) {
-  const sid = String(sessionId || '').replace(/[^\w-]/g, '').slice(0, 64) || db.id('s_');
-  const key = `chat_${t.id}_${sid}`;
-  let conv = db.one('SELECT * FROM conversations WHERE id=?', key);
+  let sid = String(sessionId || '').replace(/[^\w-]/g, '').slice(0, 64);
+  let key = `chat_${t.id}_${sid}`;
+  let conv = sid ? db.one('SELECT * FROM conversations WHERE id=?', key) : null;
   if (!conv) {
+    sid = db.id('s_') + db.token();
+    key = `chat_${t.id}_${sid}`;
     db.run('INSERT INTO conversations (id, tenant, channel, created_at, updated_at) VALUES (?,?,?,?,?)', key, t.id, 'chat', db.now(), db.now());
     conv = db.one('SELECT * FROM conversations WHERE id=?', key);
     db.logEvent(t.id, 'chat.started', { session: sid });
@@ -119,7 +122,23 @@ function session(t, sessionId) {
   return { sid, conv, history: JSON.parse(conv.history || '[]') };
 }
 
+// Kontaktdaten dürfen nur verwendet werden, wenn der Besucher sie selbst geschrieben/gesagt hat
+// (verhindert, dass manipulierte Website-Inhalte oder Prompt-Injection fremde Nummern anschreiben lassen).
+function providedByVisitor(state, { phone, email }) {
+  const text = state.visitorText || '';
+  const digits = text.replace(/\D/g, '');
+  const p = String(phone || '').replace(/\D/g, '').replace(/^(00)?49/, '').replace(/^0/, '');
+  const okPhone = !phone || (p.length >= 6 && digits.includes(p));
+  const okMail = !email || text.toLowerCase().includes(String(email).toLowerCase());
+  return okPhone && okMail && (phone || email);
+}
+
 async function execTool(t, name, input, state) {
+  if (['book_appointment', 'save_lead'].includes(name)) {
+    state.writes = (state.writes || 0) + 1;
+    if (state.writes > 2) return 'Abgelehnt: zu viele Aktionen in einer Nachricht.';
+    if (!providedByVisitor(state, input)) return 'Abgelehnt: Telefonnummer/E-Mail muss vom Besucher selbst im Chat genannt werden. Bitte den Besucher danach fragen.';
+  }
   if (name === 'get_free_slots') {
     const from = /^\d{4}-\d{2}-\d{2}$/.test(input.date_from) ? new Date(`${input.date_from}T00:00:00Z`) : new Date();
     const slots = await calendar.freeSlots(t, { from: from < new Date() ? new Date() : from, days: Math.max(1, Math.min(14, input.days || 7)), limit: 12 });
@@ -127,7 +146,7 @@ async function execTool(t, name, input, state) {
     return slots.length ? slots.map((s) => `${s.start} = ${s.label}`).join('\n') : 'Keine freien Termine im Zeitraum. Biete Rückruf an (save_lead).';
   }
   if (name === 'book_appointment') {
-    const res = await bookAppointment(t, { contact: { name: input.name, phone: input.phone, email: input.email }, start: input.start, reason: input.reason, source: state.voice ? 'voice-chat' : 'chat' });
+    const res = await bookAppointment(t, { contact: { name: input.name, phone: input.phone, email: input.email }, start: input.start, reason: input.reason, source: state.voice ? 'voice-chat' : 'chat', untrusted: true });
     if (!res.ok) return `Fehler: ${res.error} Biete andere Zeiten an.`;
     state.contactId = res.contact;
     state.ui = { type: 'booked', label: res.label };
@@ -137,9 +156,9 @@ async function execTool(t, name, input, state) {
     const anfragen = require('../tools/anfragen');
     const payload = { name: input.name, phone: input.phone, email: input.email, message: `${input.message}${input.callback_time ? ` (Rückruf gewünscht: ${input.callback_time})` : ''}`, service: input.service, source: state.voice ? 'voice-chat' : 'website-chat' };
     let res;
-    if (t.tools.anfragen.enabled) res = await anfragen.newLead(t, payload);
+    if (t.tools.anfragen.enabled) res = await anfragen.newLead(t, payload, { untrusted: true });
     else {
-      const c = contacts.upsert(t.id, payload, 'website-chat');
+      const c = contacts.upsert(t.id, payload, 'website-chat', { untrusted: true });
       res = c ? { ok: true, contact: c.id } : { ok: false, error: 'Telefon oder E-Mail fehlt' };
       if (c) await channels.notifyOwner(t, 'Neue Anfrage über den Website-Chat', `${C.contactLine(c)}\n${payload.message}`, { event: 'lead.created', contact: c.id });
     }
@@ -168,7 +187,7 @@ async function aiReply(t, s, message, opts) {
   const messages = s.history.slice(-20).map((m) => ({ role: m.role, content: m.content }));
   const userContent = [{ type: 'text', text: nowContext(t) + (extra ? `\n[Passende Website-Inhalte:]\n${extra}` : '') + (opts.page ? `\n[Besucher ist auf: ${String(opts.page).slice(0, 200)}]` : '') }, { type: 'text', text: message }];
   messages.push({ role: 'user', content: userContent });
-  const state = { voice: opts.voice };
+  const state = { voice: opts.voice, visitorText: s.history.filter((m) => m.role === 'user').map((m) => m.content).concat(message).join('\n') };
   for (let i = 0; i < 6; i++) {
     const res = await llm.create({ system, messages, tools: TOOLS, max_tokens: 4000 }, { model: t.ai.model, effort: 'low' });
     if (res.stop_reason === 'refusal') return { reply: 'Dazu kann ich leider nichts sagen. Kann ich Ihnen anders helfen – zum Beispiel mit einem Termin?', state };

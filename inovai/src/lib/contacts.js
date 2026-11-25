@@ -39,6 +39,8 @@ function extract(input) {
   const fn = pick(input, ALIASES.firstName), ln = pick(input, ALIASES.lastName);
   if (!name && (fn || ln)) name = `${fn} ${ln}`.trim();
   const email = pick(input, ALIASES.email).toLowerCase();
+  // Namen bereinigen: keine Links/Steuerzeichen, max. 60 Zeichen (Name landet in SMS-Anrede)
+  name = name.replace(/https?:\/\/\S+|www\.\S+/gi, '').replace(/[<>{}\[\]\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
   return {
     name,
     phone: normalizePhone(pick(input, ALIASES.phone)),
@@ -58,11 +60,18 @@ function byId(id) { return db.one('SELECT * FROM contacts WHERE id=?', id); }
 function byToken(token) { return token ? db.one('SELECT * FROM contacts WHERE token=?', token) : null; }
 
 // Legt Kontakt an oder aktualisiert vorhandenen (Dedup über Telefon/E-Mail).
-function upsert(tenant, input, source) {
+// untrusted = Daten aus öffentlichen Formularen/Chat: bestehende Kontakte werden dann NICHT überschrieben
+// (kein Ändern von Name/Einwilligung fremder Kontakte), nur leere Felder werden ergänzt.
+function upsert(tenant, input, source, { untrusted = false } = {}) {
   const f = extract(input);
   if (!f.phone && !f.email) return null;
   const existing = find(tenant, f);
   const now = db.now();
+  if (existing && untrusted) {
+    db.run(`UPDATE contacts SET name=COALESCE(NULLIF(name, ''), NULLIF(?, '')), phone=COALESCE(NULLIF(phone, ''), NULLIF(?, '')),
+      email=COALESCE(NULLIF(email, ''), NULLIF(?, '')), updated_at=? WHERE id=?`, f.name, f.phone, f.email, now, existing.id);
+    return byId(existing.id);
+  }
   if (existing) {
     db.run(`UPDATE contacts SET name=COALESCE(NULLIF(?, ''), name), phone=COALESCE(NULLIF(?, ''), phone),
       email=COALESCE(NULLIF(?, ''), email), marketing_consent=CASE WHEN ? = '' THEN marketing_consent ELSE ? END,

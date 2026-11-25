@@ -16,6 +16,12 @@ function normalizePhone(raw, defaultCc = '49') {
 }
 
 // Deutsche Mobilfunknummern beginnen mit +4915, +4916, +4917. Andere Länder: als mobil annehmen.
+// SMS/WhatsApp nur an erlaubte Ländervorwahlen (Standard: DACH) – Schutz vor teurem "SMS-Pumping"
+function allowedCountry(t, phone) {
+  const prefixes = (t.channels && t.channels.allowedPrefixes) || ['+49', '+43', '+41'];
+  return prefixes.some((p) => phone.startsWith(p));
+}
+
 function isMobile(phone) {
   if (!phone) return false;
   if (phone.startsWith('+49')) return /^\+491[567]/.test(phone);
@@ -47,8 +53,9 @@ function availableChannels(t, contact, tool) {
   const pref = (tool && t.tools[tool] && t.tools[tool].channel) ? [t.tools[tool].channel] : (t.channels.order || ['sms', 'email']);
   const ok = [];
   for (const ch of pref) {
-    if (ch === 'sms' && smsConfigured(t) && contact.phone && isMobile(contact.phone)) ok.push('sms');
-    if (ch === 'whatsapp' && waConfigured(t) && contact.phone && isMobile(contact.phone)) {
+    const phoneOk = contact.phone && isMobile(contact.phone) && allowedCountry(t, contact.phone);
+    if (ch === 'sms' && smsConfigured(t) && phoneOk) ok.push('sms');
+    if (ch === 'whatsapp' && waConfigured(t) && phoneOk) {
       // Außerhalb des 24h-Fensters erlaubt WhatsApp nur freigegebene Vorlagen (contentSid)
       const tpl = t.channels.whatsapp.templates && t.channels.whatsapp.templates[tool];
       if (t.channels.whatsapp.provider === 'console' || tpl || recentInbound(t, contact, 'whatsapp')) ok.push('whatsapp');

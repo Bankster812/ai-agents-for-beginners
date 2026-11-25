@@ -51,7 +51,7 @@ Davor einen Reverse-Proxy mit HTTPS (z. B. Caddy: `app.inovai.de { reverse_proxy
 
 | Produkt | Anschluss beim Kunden |
 |---|---|
-| Rückruf-Automatik | Twilio: Status-Callback der Nummer auf `/hooks/twilio/<kunde>/voice` · sipgate: Push-URL `/hooks/sipgate/<kunde>?key=…` · Placetel: Notify-URL `/hooks/placetel/<kunde>?key=…` · jede andere Anlage/Fritzbox-Lösung: `POST /api/v1/<kunde>/events/missed-call` mit `{"phone":"…"}` |
+| Rückruf-Automatik | Twilio (empfohlen): Voice-URL der Nummer auf `/hooks/twilio/<kunde>/incoming` + `tools.rueckruf.forwardTo` = Handy des Betriebs → Anruf wird durchgestellt, bei keiner Antwort Ansage + SMS · sipgate: Push-URL `/hooks/sipgate/<kunde>?key=…` · Placetel: Notify-URL `/hooks/placetel/<kunde>?key=…` · jede andere Anlage/Fritzbox-Lösung: `POST /api/v1/<kunde>/events/missed-call` mit `{"phone":"…"}` |
 | Bewertungs-Booster | Google-Bewertungslink in `tools.bewertung.reviewUrl` · Kasse/Rechnungsprogramm/Make/Zapier ruft `events/job-completed` auf – oder täglicher CSV-Upload |
 | Anfragen-Nachfasser | HTML-Formular-Snippet aus dem Dashboard einfügen **oder** bestehendes Formular (WordPress/Contact Form 7, Typeform, Ads-Leads) per Webhook an `events/lead` |
 | Alt-Kunden-Rückholer | CSV-Export der Kundensoftware an `import/customers` (Spalten frei benennbar: name, telefon, email, letzter_besuch, einwilligung) · neue Besuche an `events/customer-visit` |
@@ -107,10 +107,19 @@ Ausgehend: `notify.webhookUrl` erhält jedes Ereignis (neuer Lead, Termin gebuch
 - DSGVO: Auskunft (Export) und Löschung pro Kontakt im Dashboard; AV-Verträge mit Twilio/seven.io/Anthropic/Hoster abschließen; Datenschutzerklärung des Kunden um Chatbot/SMS ergänzen.
 - WhatsApp: außerhalb des 24-h-Fensters nur von Meta freigegebene Vorlagen (`channels.whatsapp.templates`).
 
+## Sicherheit
+
+- Twilio-Webhooks nur mit gültiger Signatur (ohne `authToken` abgelehnt), API-Key-Pflicht für alle Integrationen, Admin nur per Bearer-Token mit Sperre nach 10 Fehlversuchen/Minute.
+- Rate-Limits pro Besucher **und** pro Kunde (Schutz vor KI- und SMS-Kosten-Missbrauch); SMS nur an DACH-Nummern (`channels.allowedPrefixes`).
+- Öffentliche Formulare/Chat können bestehende Kontakte nicht überschreiben (keine gefälschten Einwilligungen); der Chatbot nutzt nur Kontaktdaten, die der Besucher selbst genannt hat.
+- Website-Crawler und Kalender-Abgleich blockieren interne Adressen (SSRF-Schutz), Größen- und Seitenlimits.
+- Hinter einem Reverse-Proxy `INOVAI_TRUST_PROXY=1` setzen, damit die echte Besucher-IP erkannt wird.
+- In Produktion (`NODE_ENV=production`, Standard im Docker-Image) werden Mandanten mit Platzhalter-/kurzen Zugangsdaten **nicht geladen** – auch die Demo nicht.
+
 ## Tests
 
 ```bash
-npm test                 # 19 End-to-End-Tests über die echte HTTP-API (alle 5 Produkte, Chatbot, Sicherheit, DSGVO)
+npm test                 # 31 End-to-End-Tests über die echte HTTP-API (alle 5 Produkte, Chatbot, Sicherheit, DSGVO)
 npm run e2e              # Browser-Test (Playwright): Widget Text + Voice, Buchung, Buchungsseite, Dashboard
                          # einmalig: npm i -D playwright && npx playwright install chromium
 ```

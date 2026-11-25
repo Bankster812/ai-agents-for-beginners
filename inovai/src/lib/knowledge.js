@@ -1,6 +1,7 @@
 'use strict';
 // Wissensbasis für den Chatbot: Firmendaten aus der Konfiguration + automatisch gecrawlte Website.
 const db = require('./db');
+const { safeFetch } = require('./net');
 
 const STOP = new Set('der die das und oder ein eine einer eines einem einen ist sind war wir sie ich du er es zu zum zur im in am an auf für mit von vom bei aus wie was wer wo wann ob nicht auch noch nur so dass den dem des als bis über unter nach vor kann können haben hat habe ihr ihre ihren uns unser unsere mein meine man sich da hier dort sehr mehr gibt'.split(' '));
 
@@ -104,14 +105,14 @@ function links(html, base) {
 }
 
 async function fetchText(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'INOVai-Knowledge-Bot/1.0 (+Website-Assistent)' }, signal: AbortSignal.timeout(10000), redirect: 'follow' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const type = res.headers.get('content-type') || '';
-  if (!/html|xml|text/.test(type)) throw new Error('kein HTML');
-  return res.text();
+  const r = await safeFetch(url, { headers: { 'User-Agent': 'INOVai-Knowledge-Bot/1.0 (+Website-Assistent)' } });
+  if (!/html|xml|text/.test(r.type)) throw new Error('kein HTML');
+  return r.text;
 }
 
 async function crawl(tenant, startUrls, maxPages = 40) {
+  maxPages = Math.max(1, Math.min(Number(maxPages) || 40, 150));
+  const origins = new Set(startUrls.map((u) => new URL(u).origin));
   const queue = [...startUrls];
   const seen = new Set();
   const pages = [];
@@ -119,7 +120,9 @@ async function crawl(tenant, startUrls, maxPages = 40) {
   for (const s of startUrls) {
     try {
       const sm = await fetchText(new URL('/sitemap.xml', s).toString());
-      for (const m of sm.matchAll(/<loc>([^<]+)<\/loc>/g)) if (!/sitemap/i.test(m[1])) queue.push(m[1].trim());
+      for (const m of sm.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+        try { const u = new URL(m[1].trim()); if (origins.has(u.origin) && !/sitemap/i.test(u.pathname)) queue.push(u.toString()); } catch { /* ungültig */ }
+      }
     } catch { /* keine Sitemap */ }
   }
   while (queue.length && pages.length < maxPages) {
