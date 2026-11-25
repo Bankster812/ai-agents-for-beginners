@@ -1,0 +1,3 @@
+[     7s] J=   3456.7 kappa=0.600 c_inst=1.500 lam=0.050 rho=0.500 delta=0.050 nu=0.700
+[    12s] J=  41855.4 kappa=0.602 c_inst=3.787 lam=0.310 rho=2.946 delta=0.477 nu=1.414
+[    17s] J=  30184.5 kappa=0.628 c_inst=4.368 lam=0.243 rho=1.344 delta=0.130 nu=1.792

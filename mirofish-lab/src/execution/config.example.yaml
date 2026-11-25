@@ -1,0 +1,59 @@
+# MiroFish-lab execution layer config. Copy to state/config.yaml (or pass --config) and edit.
+# SAFE DEFAULTS: paper mode, small sizes, strict limits.
+#
+# Going live needs ALL of: mode: live here, TRADING_MODE=live and I_UNDERSTAND_REAL_MONEY=yes in the
+# environment, credentials in .env, and only strategies with live_allowed=True. See
+# knowledge/07_execution.md -> "Go-live checklist".
+
+mode: paper                    # paper | live
+
+paper:
+  starting_cash_usd: 10800     # lab base bankroll (~EUR 10k)
+  db_path: state/paper.db
+
+live:
+  journal_path: state/live_journal.db
+
+state_dir: state               # heartbeat, risk state, logs, KILL file live here
+log_level: INFO
+
+loop:
+  poll_interval_s: 10          # book polling period
+  discovery_interval_s: 900    # re-discover markets every 15 min
+  reconcile_interval_s: 120
+  heartbeat_interval_s: 15
+  settlement_check_interval_s: 1800
+  cancel_open_orders_on_shutdown: true
+  max_consecutive_errors: 20   # then notify + back off for backoff_on_errors_s
+  backoff_on_errors_s: 120
+
+http:
+  rate_per_s: 5                # well under Polymarket's public limits
+  burst: 10
+
+discovery:
+  min_volume_24h_usd: 20000
+  min_liquidity_usd: 10000
+  max_markets: 20
+  include_slugs: []            # if non-empty, only these market slugs are traded
+  exclude_slugs: []
+
+risk:
+  max_order_usd: 50
+  max_position_pct: 0.05
+  max_total_exposure_pct: 0.30
+  max_daily_loss_pct: 0.03
+  max_drawdown_pct: 0.15
+  max_orders_per_hour: 30
+  min_market_liquidity_usd: 5000
+  min_book_depth_usd: 200
+  max_spread: 0.05
+  min_price: 0.02
+  max_price: 0.98
+  blacklist_categories: [up-or-down, crypto-15m]
+  kill_switch_file: state/KILL
+  state_file: state/risk_state.json
+
+strategies:
+  - path: src.execution.strategy_api:ExampleWiringStrategy   # live_allowed = False
+    params: {ticket_usd: 5, hold_ticks: 6, max_markets: 3}
